@@ -1,39 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { getSavedPlayerName, savePlayerName } from '../net/client';
-import { getSavedHostCode } from './storage';
+import { hostingHelpUrl } from './connection';
 
 export interface LandingProps {
+  /** True on the GitHub Pages site, where players enter the host's code. */
+  needsCode: boolean;
   initialCode?: string;
   errorMessage?: string | null;
-  onCreateLobby: (name: string) => void;
-  onJoinLobby: (code: string, name: string) => void;
-  onResumeHosting?: (code: string) => void;
+  onJoin: (name: string, code: string) => void;
 }
 
-export const Landing: React.FC<LandingProps> = ({
-  initialCode = '',
-  errorMessage = null,
-  onCreateLobby,
-  onJoinLobby,
-  onResumeHosting,
-}) => {
+/**
+ * Join screen. Games are hosted with `npm run host` from a clone of the repo,
+ * never from this page, so the only action here is joining.
+ */
+export const Landing: React.FC<LandingProps> = ({ needsCode, initialCode = '', errorMessage = null, onJoin }) => {
   const [name, setName] = useState('');
-  const [code, setCode] = useState(initialCode);
-  const [resumeCode, setResumeCode] = useState<string | null>(null);
+  const [code, setCode] = useState(initialCode.toUpperCase());
+  const helpUrl = hostingHelpUrl();
 
   useEffect(() => {
     setName(getSavedPlayerName());
-    const saved = getSavedHostCode();
-    if (saved) {
-      setResumeCode(saved);
-    }
   }, []);
-
-  useEffect(() => {
-    if (initialCode) {
-      setCode(initialCode.toUpperCase());
-    }
-  }, [initialCode]);
 
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value.slice(0, 16);
@@ -41,26 +29,16 @@ export const Landing: React.FC<LandingProps> = ({
     savePlayerName(val);
   };
 
-  const handleCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value.toUpperCase().slice(0, 4);
-    setCode(val);
-  };
+  const canJoin = !needsCode || code.length === 4;
 
-  const handleCreate = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onCreateLobby(name.trim() || 'Host');
-  };
-
-  const handleJoin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (code.length === 4) {
-      onJoinLobby(code, name.trim() || 'Player');
-    }
+    if (canJoin) onJoin(name.trim() || 'Player', code);
   };
 
   return (
     <div className="landing-screen">
-      <div className="landing-card">
+      <form className="landing-card" onSubmit={handleSubmit}>
         <h1 className="landing-title">BSPoker</h1>
 
         {errorMessage && (
@@ -84,52 +62,41 @@ export const Landing: React.FC<LandingProps> = ({
           />
         </div>
 
-        <div className="landing-section">
-          <button
-            type="button"
-            className="btn btn-primary btn-block"
-            onClick={handleCreate}
-          >
-            Create lobby
-          </button>
-        </div>
-
-        <div className="landing-divider">
-          <span>or join existing</span>
-        </div>
-
-        <form onSubmit={handleJoin} className="landing-join-form">
-          <input
-            type="text"
-            className="input-text input-code"
-            value={code}
-            onChange={handleCodeChange}
-            placeholder="CODE"
-            maxLength={4}
-            autoCapitalize="characters"
-            spellCheck="false"
-          />
-          <button
-            type="submit"
-            className="btn btn-secondary"
-            disabled={code.length !== 4}
-          >
-            Join
-          </button>
-        </form>
-
-        {resumeCode && onResumeHosting && (
-          <div className="landing-resume-section">
-            <button
-              type="button"
-              className="btn btn-outline btn-block"
-              onClick={() => onResumeHosting(resumeCode)}
-            >
-              Resume hosting {resumeCode}
-            </button>
+        {needsCode && (
+          <div className="form-group">
+            <label htmlFor="game-code" className="form-label">
+              Game code
+            </label>
+            <input
+              id="game-code"
+              type="text"
+              className="input-text input-code"
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4))}
+              placeholder="CODE"
+              maxLength={4}
+              autoCapitalize="characters"
+              autoComplete="off"
+              spellCheck="false"
+            />
           </div>
         )}
-      </div>
+
+        <div className="landing-section">
+          <button type="submit" className="btn btn-primary btn-block" disabled={!canJoin}>
+            Join game
+          </button>
+        </div>
+
+        {needsCode && helpUrl && (
+          <div className="landing-host-section">
+            <a className="btn btn-outline btn-block" href={helpUrl} target="_blank" rel="noopener noreferrer">
+              Host a game
+            </a>
+            <p className="landing-host-note">Hosting runs on your computer. The guide shows how.</p>
+          </div>
+        )}
+      </form>
     </div>
   );
 };

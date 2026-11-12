@@ -18,13 +18,13 @@ describe('HostSession and ClientSession integration over memoryTransport', () =>
     for (let seed = 1; seed <= 5; seed++) {
       const rng = createRng(seed * 9999);
       const code = `TST${seed}`;
-      const host = new HostSession(code, 'host-id', undefined, false);
+      const host = new HostSession(code, 'host-id');
 
       // Connect 3 clients
       const clients: ClientSession[] = [];
       for (let i = 1; i <= 3; i++) {
         const memConn = host.memoryTransport.connectClient();
-        const client = new ClientSession(code, `Player ${i}`, memConn, `token-${seed}-${i}`);
+        const client = new ClientSession('memory', `Player ${i}`, { conn: memConn, token: `token-${seed}-${i}` });
         clients.push(client);
       }
 

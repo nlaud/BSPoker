@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { PlayerView } from '../engine/protocol';
+import { inviteLink } from './connection';
 import { Hand, normalForm } from '../engine/hands';
 import { Card as CardComponent } from './Card';
 import { Seat } from './Seat';
@@ -356,7 +357,7 @@ export const Table: React.FC<TableProps> = ({
 
   const handleCopyCode = () => {
     if (typeof window === 'undefined') return;
-    const url = `${window.location.origin}${window.location.pathname}?lobby=${view.lobbyCode}`;
+    const url = inviteLink(view.lobbyCode);
     navigator.clipboard.writeText(url).then(() => {
       setCopiedCode(true);
       setTimeout(() => setCopiedCode(false), 1500);

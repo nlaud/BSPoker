@@ -196,32 +196,6 @@ input {
   border-color: var(--ice);
 }
 
-.landing-divider {
-  display: flex;
-  align-items: center;
-  text-align: center;
-  margin: 20px 0;
-  color: var(--muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.landing-divider::before, .landing-divider::after {
-  content: '';
-  flex: 1;
-  border-bottom: 1px solid var(--border);
-}
-
-.landing-divider span {
-  padding: 0 10px;
-}
-
-.landing-join-form {
-  display: flex;
-  gap: 10px;
-}
-
 .input-code {
   text-align: center;
   font-size: 18px;
@@ -230,8 +204,21 @@ input {
   text-transform: uppercase;
 }
 
-.landing-resume-section {
+.landing-host-section {
   margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+.landing-host-section .btn {
+  text-decoration: none;
+}
+
+.landing-host-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* Lobby screen styles */

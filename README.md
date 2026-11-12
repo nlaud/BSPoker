@@ -1,47 +1,80 @@
 # BSPoker
 
-BSPoker is a minimalist, dark-themed, real-time multiplayer bluffing poker web game for 2 to 8 players.
-Every player starts with 2 cards, and in each round players are dealt their cards alongside 2 community cards that are visible to everyone.
-On your turn, you must either call a hand that strictly ranks higher than the current call or call BS on the previous player's call.
-When BS is called, all cards are revealed and checked against the called hand across every dealt player hand and both community cards.
-If the called hand exists, the player who called BS gets an extra card for future rounds; otherwise, the player who made the bluff gets an extra card.
-A player who already holds 5 cards and loses a challenge is eliminated and becomes a spectator.
-The game continues clockwise until only one player remains alive as the winner.
+BSPoker is a minimalist, dark-themed, real-time multiplayer bluffing poker game for 2 to 8 players.
+Every player starts with 2 cards, and each round also deals 2 community cards that everyone can see.
+On your turn, you call a poker hand that ranks higher than the current call, or you call BS on the last call.
+When someone calls BS, all cards are revealed and the called hand is checked against every dealt card.
+If the hand exists, the player who called BS gets an extra card in later rounds.
+If it does not exist, the player who called the hand gets the extra card.
+A player who already holds 5 cards and loses is eliminated and becomes a spectator.
+The last player left wins.
 
-## How to Play
+## Joining a game
 
-Open the hosted GitHub Pages URL in your browser.
-Enter your name and click "Create lobby" to host a game, or enter a 4-letter room code to join an existing table.
-Share the lobby code or the invite link with your friends.
-Once at least two seated players toggle their ready status, a 3-second countdown starts the match.
-During the game, press and hold Space or touch and hold the table felt to peek at your private cards.
+1. Ask your host for the 4-letter game code.
+2. Open the BSPoker site, for example `https://nlaud.github.io/BSPoker/`.
+3. Enter your name and the code, then select "Join game".
+4. Select "Ready". The match starts when every seated player is ready.
 
-## Hosting Tips
+During a round, hold Space (or press and hold anywhere on a touch screen) to look at your cards.
+On your turn, hold the BS button for one second to call BS, or select "Call a hand" and type a hand such as "pair of nines".
 
-We recommend hosting the lobby on a plugged-in laptop with the game tab kept active in the foreground.
-A phone host may suspend WebRTC connections when the screen locks or when switching to other apps, which pauses the game for everyone.
+## Hosting a game
 
-## PeerJS Broker
+The host runs the game server on their own computer.
+The server is the source of truth for the game, and the host also plays.
 
-The PeerJS broker server is only used to broker the initial WebRTC connection handshake between browsers.
-All game state, actions, and card data travel directly peer-to-peer between client browsers and the host browser.
-Players need access to the broker only when creating or joining a lobby.
+### One-time setup
 
-## GitHub Pages Deployment
+1. Install [Node.js](https://nodejs.org/) 22 or later.
+2. Install `cloudflared`, which makes your server reachable from other networks such as school wifi and cellular:
+   - Windows: `winget install --id Cloudflare.cloudflared`
+   - macOS: `brew install cloudflared`
+   - Linux: see [the cloudflared downloads](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+3. Clone this repository and install its packages:
 
-To enable deployment on GitHub, navigate to your repository Settings -> Pages.
-Set the Build and deployment Source to "GitHub Actions".
-If the repository is private, GitHub Pages requires a GitHub Pro or Team plan, or you can make the repository public.
+   ```sh
+   git clone https://github.com/nlaud/BSPoker.git
+   cd BSPoker
+   npm install
+   ```
 
-## Local Development
+### Each game night
 
-Install dependencies with `npm install`.
-Start the local PeerJS broker with `npm run peer`.
-Start the Vite development server with `npm run dev`.
-Open `http://localhost:5173/?peer=localhost:9000` to connect using the local broker.
-Run the test suite with `npm test`, check types with `npm run typecheck`, and lint with `npm run lint`.
+1. In the repository folder, run:
+
+   ```sh
+   npm run host
+   ```
+
+2. The command prints a game code, for example `ABCD`, and opens your host page in your browser.
+3. Send the code to your friends. They open the BSPoker site and enter it.
+4. Keep the terminal window open while you play. Press Ctrl+C to stop the server.
+
+If the code does not work for a friend, send them the "Direct link" that the command also prints.
+If everyone is on the same home wifi, `npm run host:lan` skips the public tunnel. Friends then open the "Same wifi" address that it prints.
+Use `npm run host -- --port 9000` to use a port other than 8787.
+
+### How the connection works
+
+- `npm run host` builds the game and starts a server on your computer at `http://localhost:8787`.
+- `cloudflared` opens a free Cloudflare quick tunnel. Players connect to your server through a public `https://….trycloudflare.com` address on port 443, which most networks allow.
+- The server posts that address to [ntfy.sh](https://ntfy.sh) under your game code. The BSPoker site looks up the code there to find your server. ntfy.sh only stores the address. Game data goes straight to your server.
+- Only your host page has the host key, so only you can change lobby rules or remove offline players.
+- When you stop the server, it marks the code as ended. A restart gets a new code.
+
+## Development
+
+1. Install packages with `npm install`.
+2. Run `npm run host:lan` and open `http://localhost:8787` to play against the built client.
+3. For hot reload of the client, run `npm run dev` and open `http://localhost:5173/?server=http://localhost:8787` while `npm run host:lan` runs.
+4. Run the tests with `npm test`, check types with `npm run typecheck`, and lint with `npm run lint`.
+
+## GitHub Pages deployment
+
+The site deploys to GitHub Pages from `main` through GitHub Actions.
+To turn it on, open the repository Settings, then Pages, and set the source to "GitHub Actions".
 
 ## Credits
 
 Card audio samples courtesy of Kenney Casino Audio (CC0 1.0 Universal - kenney.nl).
-

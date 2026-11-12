@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { PlayerView } from '../engine/protocol';
+import { inviteLink } from './connection';
 import { setSeenDealSeq } from './dealMemory';
 import { preloadCardSounds } from './cardSounds';
 
@@ -32,7 +33,7 @@ export const Lobby: React.FC<LobbyProps> = ({
 
   const handleCopyLink = () => {
     if (typeof window === 'undefined') return;
-    const url = `${window.location.origin}${window.location.pathname}?lobby=${view.lobbyCode}`;
+    const url = inviteLink(view.lobbyCode);
     navigator.clipboard.writeText(url).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);

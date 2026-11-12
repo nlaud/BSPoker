@@ -1,8 +1,7 @@
-import { PlayerView, ClientMessage, HostMessage } from '../engine/protocol';
+import { PlayerView, ClientMessage, HostMessage, PROTOCOL_VERSION } from '../engine/protocol';
 import { Hand } from '../engine/hands';
 import { Connection, Unsub } from './transport';
-import { connectToHost } from './peerTransport';
-import Peer from 'peerjs';
+import { connectWebSocket } from './wsTransport';
 
 export type ClientStatus =
   | 'connecting'
@@ -11,8 +10,9 @@ export type ClientStatus =
   | 'disconnected'
   | 'error';
 
-export function getOrCreateTabToken(code: string): string {
-  const key = `bspoker:token:${code.toUpperCase()}`;
+/** Per-tab player token for one server, so a refresh rejoins the same seat. */
+export function getOrCreateTabToken(serverKey: string): string {
+  const key = `bspoker:token:${serverKey}`;
   try {
     if (typeof sessionStorage === 'undefined') {
       return `tok-${Math.random().toString(36).slice(2, 10)}`;
@@ -46,8 +46,17 @@ export function savePlayerName(name: string): void {
   }
 }
 
+export interface ClientSessionOptions {
+  /** Existing connection (tests and in-memory games) instead of dialing a server. */
+  conn?: Connection;
+  token?: string;
+  /** Claims the host seat; only the host's own page has it. */
+  hostKey?: string;
+}
+
 export class ClientSession {
-  public lobbyCode: string;
+  /** WebSocket address of the host's server, or 'memory' for an in-memory connection. */
+  public readonly serverUrl: string;
   public token: string;
   public name: string;
   public playerId: string | null = null;
@@ -56,31 +65,27 @@ export class ClientSession {
   public errorMessage: string | null = null;
 
   private conn: Connection | null = null;
-  private peer: Peer | null = null;
+  private readonly hostKey: string | undefined;
   private isUsingMemoryConn = false;
 
   private viewListeners = new Set<(view: PlayerView) => void>();
   private statusListeners = new Set<(status: ClientStatus) => void>();
 
-  private pingInterval: NodeJS.Timeout | null = null;
-  private reconnectInterval: NodeJS.Timeout | null = null;
-  private reconnectTimeout: NodeJS.Timeout | null = null;
+  private pingInterval: ReturnType<typeof setInterval> | null = null;
+  private reconnectInterval: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimeout: ReturnType<typeof setInterval> | null = null;
   private isDestroyed = false;
 
-  constructor(
-    code: string,
-    name: string,
-    customConn?: Connection,
-    customToken?: string
-  ) {
-    this.lobbyCode = code.toUpperCase();
-    this.token = customToken || getOrCreateTabToken(this.lobbyCode);
+  constructor(serverUrl: string, name: string, options: ClientSessionOptions = {}) {
+    this.serverUrl = options.conn ? 'memory' : serverUrl;
+    this.token = options.token || getOrCreateTabToken(this.serverUrl);
+    this.hostKey = options.hostKey;
     this.name = name.trim().slice(0, 16) || 'Player';
     savePlayerName(this.name);
 
-    if (customConn) {
+    if (options.conn) {
       this.isUsingMemoryConn = true;
-      this.attachConnection(customConn);
+      this.attachConnection(options.conn);
     } else {
       this.initiateConnection();
     }
@@ -105,13 +110,11 @@ export class ClientSession {
     this.setStatus('connecting');
 
     try {
-      const { conn, peer } = await connectToHost(this.lobbyCode);
+      const conn = await connectWebSocket(this.serverUrl);
       if (this.isDestroyed) {
         conn.close();
-        peer.destroy();
         return;
       }
-      this.peer = peer;
       this.attachConnection(conn);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to connect';
@@ -135,6 +138,8 @@ export class ClientSession {
       type: 'join',
       token: this.token,
       name: this.name,
+      hostKey: this.hostKey,
+      protocolVersion: PROTOCOL_VERSION,
     });
 
     // Start 5s ping
@@ -150,6 +155,14 @@ export class ClientSession {
     if (!msg || typeof msg !== 'object') return;
 
     if (msg.type === 'welcome') {
+      if (msg.protocolVersion !== PROTOCOL_VERSION) {
+        this.setStatus(
+          'error',
+          'The host is running a different version of BSPoker. Ask them to update it (git pull) and restart npm run host.',
+        );
+        this.destroy();
+        return;
+      }
       this.playerId = msg.playerId;
       this.setStatus('connected');
       return;
@@ -193,35 +206,35 @@ export class ClientSession {
 
     this.setStatus('reconnecting', 'Reconnecting to host...');
 
-    // Attempt reconnect every 2s for up to 60s
-    let elapsed = 0;
+    // Attempt reconnect every 2s for up to 60s, one attempt at a time.
+    const startedAt = Date.now();
+    let attemptInFlight = false;
     if (this.reconnectInterval) clearInterval(this.reconnectInterval);
 
     this.reconnectInterval = setInterval(async () => {
-      if (this.isDestroyed) return;
-      elapsed += 2000;
-      if (elapsed >= 60000) {
+      if (this.isDestroyed || attemptInFlight) return;
+      if (Date.now() - startedAt >= 60000) {
         if (this.reconnectInterval) clearInterval(this.reconnectInterval);
         this.setStatus('disconnected', 'Host disconnected');
         return;
       }
 
+      attemptInFlight = true;
       try {
-        const { conn, peer } = await connectToHost(this.lobbyCode);
+        const conn = await connectWebSocket(this.serverUrl, 4000);
         if (this.isDestroyed) {
           conn.close();
-          peer.destroy();
           return;
         }
         if (this.reconnectInterval) {
           clearInterval(this.reconnectInterval);
           this.reconnectInterval = null;
         }
-        if (this.peer) this.peer.destroy();
-        this.peer = peer;
         this.attachConnection(conn);
       } catch {
         // Continue retrying
+      } finally {
+        attemptInFlight = false;
       }
     }, 2000);
   }
@@ -298,10 +311,6 @@ export class ClientSession {
     if (this.conn) {
       this.conn.close();
       this.conn = null;
-    }
-    if (this.peer) {
-      this.peer.destroy();
-      this.peer = null;
     }
 
     this.viewListeners.clear();

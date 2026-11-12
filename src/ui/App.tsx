@@ -1,180 +1,141 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { HostSession, loadHostState, clearHostState, generateLobbyCode } from '../net/host';
-import { ClientSession, getSavedPlayerName, getOrCreateTabToken } from '../net/client';
+import { ClientSession, getSavedPlayerName } from '../net/client';
+import { lookupHost, toWebSocketUrl } from '../net/directory';
 import { PlayerView } from '../engine/protocol';
 import { Hand } from '../engine/hands';
 import { Landing } from './Landing';
 import { Lobby } from './Lobby';
 import { Table } from './Table';
 import { initSound } from './sound';
-import { isHostOfCurrentTab } from './storage';
+import { detectPageMode, setQuery } from './connection';
+
+const LAST_JOIN_KEY = 'bspoker:lastJoin';
+
+interface LastJoin {
+  code: string | null;
+  wsUrl: string;
+}
+
+function readLastJoin(): LastJoin | null {
+  try {
+    const raw = sessionStorage.getItem(LAST_JOIN_KEY);
+    return raw ? (JSON.parse(raw) as LastJoin) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLastJoin(value: LastJoin | null): void {
+  try {
+    if (value) sessionStorage.setItem(LAST_JOIN_KEY, JSON.stringify(value));
+    else sessionStorage.removeItem(LAST_JOIN_KEY);
+  } catch {
+    // Storage unavailable: a refresh just shows the join screen.
+  }
+}
 
 export const App: React.FC = () => {
+  const [mode] = useState(detectPageMode);
   const [clientSession, setClientSession] = useState<ClientSession | null>(null);
   const [view, setView] = useState<PlayerView | null>(null);
   const [clientStatus, setClientStatus] = useState<string>('idle');
   const [clientError, setClientError] = useState<string | null>(null);
-  const [initialLobbyCode, setInitialLobbyCode] = useState<string>('');
-
-  const hostSessionRef = useRef<HostSession | null>(null);
+  const [lookingUp, setLookingUp] = useState<string | null>(null);
+  /** Last code the player tried, so a failed lookup keeps it in the form for a quick fix. */
+  const [attemptedCode, setAttemptedCode] = useState<string>('');
+  const [initialCode] = useState(
+    () => new URLSearchParams(window.location.search).get('code')?.toUpperCase().slice(0, 4) ?? '',
+  );
+  const hostKeyRef = useRef<string | null>(new URLSearchParams(window.location.search).get('host'));
   const clientSessionRef = useRef<ClientSession | null>(null);
 
-  // Initialize sound on mount
   useEffect(() => {
     initSound();
   }, []);
 
-  const cleanupSessions = useCallback(() => {
-    if (clientSessionRef.current) {
-      clientSessionRef.current.destroy();
-      clientSessionRef.current = null;
-    }
-    if (hostSessionRef.current) {
-      hostSessionRef.current.destroy();
-      hostSessionRef.current = null;
-    }
+  const cleanupSession = useCallback(() => {
+    clientSessionRef.current?.destroy();
+    clientSessionRef.current = null;
     setClientSession(null);
     setView(null);
     setClientStatus('idle');
-    setClientError(null);
   }, []);
 
-  const resumeHosting = useCallback((code: string) => {
-    cleanupSessions();
-
-    const saved = loadHostState(code);
-    if (!saved) return;
-
-    const token = getOrCreateTabToken(code);
-    const hostPlayer = saved.state.players.find((p) => p.seatIndex === 0) || saved.state.players[0];
-    const hostPlayerId = hostPlayer ? hostPlayer.id : 'host-1';
-    const hostName = hostPlayer ? hostPlayer.name : (getSavedPlayerName() || 'Host');
-
-    const host = new HostSession(code, hostPlayerId, saved.state, true);
-    hostSessionRef.current = host;
-
-    const clientConn = host.memoryTransport.connectClient();
-    const client = new ClientSession(code, hostName, clientConn, token);
-    clientSessionRef.current = client;
-    setClientSession(client);
-
-    client.onView((newView) => setView(newView));
-    client.onStatus((status) => {
-      setClientStatus(status);
-      if (client.errorMessage) {
-        setClientError(client.errorMessage);
+  const startClient = useCallback(
+    (wsUrl: string, playerName: string, code: string | null) => {
+      cleanupSession();
+      setClientError(null);
+      const client = new ClientSession(wsUrl, playerName, { hostKey: hostKeyRef.current ?? undefined });
+      clientSessionRef.current = client;
+      setClientSession(client);
+      writeLastJoin({ code, wsUrl });
+      // The host key is only needed for the first join; keep it out of the address bar.
+      if (hostKeyRef.current) {
+        hostKeyRef.current = null;
+        setQuery({ host: null });
       }
-    });
-  }, [cleanupSessions]);
+      client.onView((newView) => {
+        setView(newView);
+        if (code === null && mode.kind !== 'served') setQuery({ code: newView.lobbyCode });
+      });
+      client.onStatus((status) => {
+        setClientStatus(status);
+        if (status === 'error' && client.errorMessage) setClientError(client.errorMessage);
+      });
+    },
+    [cleanupSession, mode.kind],
+  );
 
-  const joinExistingLobby = useCallback((code: string, playerName: string, customToken?: string) => {
-    cleanupSessions();
-
-    const cleanCode = code.toUpperCase();
-    const client = new ClientSession(cleanCode, playerName, undefined, customToken);
-    clientSessionRef.current = client;
-    setClientSession(client);
-
-    // Update URL
-    if (typeof window !== 'undefined' && window.history) {
-      const url = new URL(window.location.href);
-      url.searchParams.set('lobby', cleanCode);
-      window.history.replaceState({}, '', url.toString());
-    }
-
-    client.onView((newView) => setView(newView));
-    client.onStatus((status) => {
-      setClientStatus(status);
-      if (client.errorMessage) {
-        setClientError(client.errorMessage);
+  const joinByCode = useCallback(
+    async (code: string, playerName: string) => {
+      const clean = code.toUpperCase();
+      setClientError(null);
+      setAttemptedCode(clean);
+      setLookingUp(clean);
+      try {
+        const serverUrl = await lookupHost(clean);
+        setQuery({ code: clean });
+        startClient(toWebSocketUrl(serverUrl), playerName, clean);
+      } catch (err) {
+        setClientError(err instanceof Error ? err.message : 'Could not join that game');
+      } finally {
+        setLookingUp(null);
       }
-    });
-  }, [cleanupSessions]);
+    },
+    [startClient],
+  );
 
-  // Check URL and resume conditions on initial mount
+  // A refresh rejoins the same seat; a host link joins straight away.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const params = new URLSearchParams(window.location.search);
-    const lobbyParam = params.get('lobby')?.toUpperCase() || '';
-    if (lobbyParam) {
-      setInitialLobbyCode(lobbyParam);
-    }
-
-    // Check if we should resume hosting
-    if (lobbyParam && isHostOfCurrentTab(lobbyParam)) {
-      const savedHost = loadHostState(lobbyParam);
-      if (savedHost) {
-        resumeHosting(lobbyParam);
-        return;
+    const name = getSavedPlayerName();
+    const last = readLastJoin();
+    if (mode.kind !== 'code') {
+      if (hostKeyRef.current || (last && last.wsUrl === mode.wsUrl)) {
+        startClient(mode.wsUrl, name || (hostKeyRef.current ? 'Host' : 'Player'), null);
       }
+      return;
     }
-
-    // Auto-rejoin as client if token exists for this lobby
-    if (lobbyParam) {
-      const tokenKey = `bspoker:token:${lobbyParam}`;
-      const savedToken = sessionStorage.getItem(tokenKey);
-      if (savedToken) {
-        const playerName = getSavedPlayerName() || 'Player';
-        joinExistingLobby(lobbyParam, playerName, savedToken);
-      }
+    if (initialCode && last && last.code === initialCode) {
+      startClient(last.wsUrl, name || 'Player', initialCode);
     }
-  }, [resumeHosting, joinExistingLobby]);
-
-  const createLobby = (hostName: string) => {
-    cleanupSessions();
-
-    const code = generateLobbyCode();
-    const token = getOrCreateTabToken(code);
-    const hostPlayerId = `p-${Math.random().toString(36).slice(2, 9)}`;
-
-    const host = new HostSession(code, hostPlayerId, undefined, true);
-    hostSessionRef.current = host;
-
-    // Host's UI connects through host.memoryTransport
-    const clientConn = host.memoryTransport.connectClient();
-    const client = new ClientSession(code, hostName, clientConn, token);
-    clientSessionRef.current = client;
-    setClientSession(client);
-
-    client.onView((newView) => setView(newView));
-    client.onStatus((status) => {
-      setClientStatus(status);
-      if (client.errorMessage) {
-        setClientError(client.errorMessage);
-      }
-    });
-  };
+    // Only on first load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleLeave = () => {
-    if (clientSessionRef.current) {
-      clientSessionRef.current.leave();
-    }
-    if (hostSessionRef.current) {
-      clearHostState(hostSessionRef.current.lobbyCode);
-    }
-    cleanupSessions();
-
-    // Clean URL
-    if (typeof window !== 'undefined' && window.history) {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('lobby');
-      window.history.replaceState({}, '', url.toString());
-    }
+    clientSessionRef.current?.leave();
+    cleanupSession();
+    writeLastJoin(null);
+    setQuery({ code: null });
   };
 
-  // Reconnecting banner / Host disconnected screen
   if (clientStatus === 'disconnected') {
     return (
       <div className="center-screen">
         <div className="landing-card text-center">
           <h2 className="landing-title">Host disconnected</h2>
-          <p className="status-subtext">The game session has ended.</p>
-          <button
-            type="button"
-            className="btn btn-primary btn-block"
-            onClick={handleLeave}
-          >
+          <p className="status-subtext">The game server stopped or can no longer be reached.</p>
+          <button type="button" className="btn btn-primary btn-block" onClick={handleLeave}>
             Back to start
           </button>
         </div>
@@ -182,14 +143,13 @@ export const App: React.FC = () => {
     );
   }
 
-  // Active view exists
   if (view && clientStatus !== 'error') {
+    const banner =
+      clientStatus === 'reconnecting' ? <div className="reconnecting-banner">Reconnecting to host...</div> : null;
     if (view.phase === 'lobby') {
       return (
         <>
-          {clientStatus === 'reconnecting' && (
-            <div className="reconnecting-banner">Reconnecting to host...</div>
-          )}
+          {banner}
           <Lobby
             view={view}
             onSetReady={(ready) => clientSession?.setReady(ready)}
@@ -199,12 +159,9 @@ export const App: React.FC = () => {
         </>
       );
     }
-
     return (
       <>
-        {clientStatus === 'reconnecting' && (
-          <div className="reconnecting-banner">Reconnecting to host...</div>
-        )}
+        {banner}
         <Table
           view={view}
           onCallHand={(hand: Hand) => clientSession?.call(hand)}
@@ -218,26 +175,26 @@ export const App: React.FC = () => {
     );
   }
 
-  // Connecting spinner
-  if (clientStatus === 'connecting') {
+  if (lookingUp || clientStatus === 'connecting') {
     return (
       <div className="center-screen">
         <div className="landing-card text-center">
           <h2 className="landing-title">Connecting...</h2>
-          <p className="status-subtext">Reaching table {initialLobbyCode}</p>
+          <p className="status-subtext">{lookingUp ? `Finding game ${lookingUp}` : 'Reaching the game server'}</p>
         </div>
       </div>
     );
   }
 
-  // Landing screen
   return (
     <Landing
-      initialCode={initialLobbyCode}
+      needsCode={mode.kind === 'code'}
+      initialCode={attemptedCode || initialCode}
       errorMessage={clientError}
-      onCreateLobby={createLobby}
-      onJoinLobby={(c, n) => joinExistingLobby(c, n)}
-      onResumeHosting={(c) => resumeHosting(c)}
+      onJoin={(name, code) => {
+        if (mode.kind === 'code') void joinByCode(code, name);
+        else startClient(mode.wsUrl, name, null);
+      }}
     />
   );
 };

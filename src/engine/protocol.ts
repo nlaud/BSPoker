@@ -55,8 +55,15 @@ export interface PlayerView {
 }
 
 // Client -> Host messages
+/**
+ * Bumped whenever host and client messages change incompatibly. The page on
+ * GitHub Pages and a host's cloned server must agree on it.
+ */
+export const PROTOCOL_VERSION = 2;
+
 export type ClientMessage =
-  | { type: 'join'; token: string; name: string }
+  /** hostKey is only sent by the host's own page; it claims the host seat. */
+  | { type: 'join'; token: string; name: string; hostKey?: string; protocolVersion: number }
   | { type: 'setReady'; ready: boolean }
   | { type: 'peek'; peeking: boolean }
   | { type: 'call'; hand: Hand }
@@ -69,7 +76,7 @@ export type ClientMessage =
 
 // Host -> Client messages
 export type HostMessage =
-  | { type: 'welcome'; playerId: string }
+  | { type: 'welcome'; playerId: string; protocolVersion: number }
   | { type: 'view'; view: PlayerView }
   | { type: 'error'; message: string }
   | { type: 'pong' };
