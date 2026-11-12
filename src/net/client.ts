@@ -289,6 +289,10 @@ export class ClientSession {
     this.send({ type: 'setRule', rule, value });
   }
 
+  public setTurnTimer(seconds: number): void {
+    this.send({ type: 'setTurnTimer', seconds });
+  }
+
   public onView(cb: (view: PlayerView) => void): Unsub {
     this.viewListeners.add(cb);
     if (this.view) {

@@ -55,6 +55,9 @@ export class HostSession {
   /** The countdown deadline the running timer was set for. */
   private countdownTimerDeadline: number | null = null;
   private revealTimeouts: ReturnType<typeof setTimeout>[] = [];
+  private turnTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The turn deadline the running turn timer was set for. */
+  private turnTimerDeadline: number | null = null;
   private lobbyGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private isDestroyed = false;
 
@@ -225,9 +228,6 @@ export class HostSession {
       }
       case 'bs': {
         this.dispatch({ type: 'bs', playerId });
-        if (this.state.phase === 'reveal') {
-          this.startRevealSequence();
-        }
         break;
       }
       case 'playAgain': {
@@ -248,17 +248,49 @@ export class HostSession {
         this.dispatch({ type: 'setRule', playerId, rule: msg.rule, value: msg.value });
         break;
       }
+      case 'setTurnTimer': {
+        this.dispatch({ type: 'setTurnTimer', playerId, seconds: msg.seconds });
+        break;
+      }
     }
   }
 
   public dispatch(action: GameAction): void {
     if (this.isDestroyed) return;
+    const prevPhase = this.state.phase;
     this.state = gameReducer(this.state, action);
     this.onChange?.(this.state);
     this.broadcast();
     // Any change can start, move or cancel the lobby countdown (ready, join,
     // leave, Remove, a timed-out seat), so keep the timer in step with it.
     this.checkCountdown();
+    this.checkTurnTimer();
+    // A BS call, typed or forced by the turn timer, starts the reveal.
+    if (prevPhase !== 'reveal' && this.state.phase === 'reveal') this.startRevealSequence();
+  }
+
+  private clearTurnTimer(): void {
+    if (this.turnTimer) clearTimeout(this.turnTimer);
+    this.turnTimer = null;
+    this.turnTimerDeadline = null;
+  }
+
+  /** Keeps one timer armed for the current turn deadline; it acts for the player when it fires. */
+  private checkTurnTimer(): void {
+    const deadline = this.state.phase === 'bidding' ? this.state.turnDeadline : null;
+    const playerId = this.state.turnPlayerId;
+    if (deadline === null || playerId === null) {
+      this.clearTurnTimer();
+      return;
+    }
+    if (this.turnTimer && this.turnTimerDeadline === deadline) return;
+    this.clearTurnTimer();
+    this.turnTimerDeadline = deadline;
+    this.turnTimer = setTimeout(() => {
+      this.turnTimer = null;
+      this.turnTimerDeadline = null;
+      this.dispatch({ type: 'turnTimeout', playerId, deadline });
+    }, Math.max(0, deadline - Date.now()));
   }
 
   private clearCountdownTimer(): void {
@@ -343,6 +375,7 @@ export class HostSession {
     this.isDestroyed = true;
     if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
     this.clearCountdownTimer();
+    this.clearTurnTimer();
     for (const t of this.revealTimeouts) clearTimeout(t);
     this.revealTimeouts = [];
     for (const t of this.lobbyGraceTimers.values()) clearTimeout(t);

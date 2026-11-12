@@ -55,6 +55,12 @@ const CATEGORY_ORDER_STRAIGHT_BEATS_FLUSH: Record<Hand['kind'], number> = {
   royalFlush: 10,
 };
 
+/** Hand categories from the highest to the lowest under these rules. */
+export function handKindsHighToLow(rules: Rules = DEFAULT_RULES): Hand['kind'][] {
+  const order = rules.straightBeatsFlush ? CATEGORY_ORDER_STRAIGHT_BEATS_FLUSH : CATEGORY_ORDER;
+  return (Object.keys(order) as Hand['kind'][]).sort((a, b) => order[b] - order[a]);
+}
+
 export function compareHands(a: Hand, b: Hand, rules: Rules = DEFAULT_RULES): number {
   const order = rules.straightBeatsFlush ? CATEGORY_ORDER_STRAIGHT_BEATS_FLUSH : CATEGORY_ORDER;
   const catA = order[a.kind];

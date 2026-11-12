@@ -1,6 +1,29 @@
 import { Card, createDeck, shuffleDeck, defaultRng } from './cards';
 import { Hand, compareHands, normalForm, Rules, DEFAULT_RULES } from './hands';
+
+/** Lobby settings the host picks: the hand rules plus the turn timer. */
+export interface GameSettings extends Rules {
+  /** Seconds each player gets to act on their turn; 0 means no timer. */
+  turnSeconds: number;
+}
+
+/** Turn timer choices in the lobby, in seconds (0 = off). */
+export const TURN_TIMER_OPTIONS = [0, 15, 30, 60, 90] as const;
+
+export const DEFAULT_SETTINGS: GameSettings = { ...DEFAULT_RULES, turnSeconds: 0 };
+
+/** Slack on top of the deal animation for the view to reach every device. */
+const DEAL_GRACE_SLACK_MS = 400;
+
+/** The first turn of a round also covers the deal animation, so no time is lost to it. */
+export function dealGraceMs(playerCards: number): number {
+  return dealDurationMs(playerCards) + DEAL_GRACE_SLACK_MS;
+}
+
+/** What a player who runs out of time opens with: the lowest hand there is. */
+export const TIMEOUT_OPENING_HAND: Hand = { kind: 'high', rank: 2 };
 import { handExists } from './exists';
+import { dealDurationMs } from './dealTiming';
 
 export interface PlayerState {
   id: string;
@@ -45,8 +68,10 @@ export interface GameState {
   roundStarterId: string | null;
   winnerId: string | null;
   countdownDeadline: number | null;
+  /** When the turn player runs out of time (host clock), or null without a turn timer. */
+  turnDeadline: number | null;
   log: string[];
-  settings: Rules;
+  settings: GameSettings;
 }
 
 export type GameAction =
@@ -66,7 +91,10 @@ export type GameAction =
   | { type: 'setConnected'; playerId: string; connected: boolean }
   | { type: 'cleanDisconnectedInLobby'; playerId: string }
   | { type: 'playAgain' }
-  | { type: 'setRule'; playerId: string; rule: 'straightBeatsFlush'; value: boolean };
+  | { type: 'setRule'; playerId: string; rule: 'straightBeatsFlush'; value: boolean }
+  | { type: 'setTurnTimer'; playerId: string; seconds: number }
+  /** The host's turn timer fired; deadline must still be the current one. */
+  | { type: 'turnTimeout'; playerId: string; deadline: number };
 
 export function createInitialState(lobbyCode: string, hostPlayerId: string): GameState {
   return {
@@ -85,8 +113,9 @@ export function createInitialState(lobbyCode: string, hostPlayerId: string): Gam
     roundStarterId: null,
     winnerId: null,
     countdownDeadline: null,
+    turnDeadline: null,
     log: [],
-    settings: { ...DEFAULT_RULES },
+    settings: { ...DEFAULT_SETTINGS },
   };
 }
 
@@ -143,6 +172,12 @@ function refreshLobbyCountdown(state: GameState, now: number = Date.now()): void
   else if (state.countdownDeadline === null) state.countdownDeadline = now + 3000;
 }
 
+/** Starts the clock for the player whose turn it is now (no-op without a turn timer). */
+function startTurnClock(state: GameState, extraMs = 0): void {
+  const seconds = state.settings.turnSeconds;
+  state.turnDeadline = seconds > 0 ? Date.now() + extraMs + seconds * 1000 : null;
+}
+
 /** Verdict headings, shared by the log and the full-screen verdict. */
 export const VERDICT_HAD_IT = "Never didn't have it";
 export const VERDICT_BS = 'BS!';
@@ -177,6 +212,8 @@ export function dealRound(
   state.lastBsCallerId = null;
   state.revealData = null;
   state.phase = 'bidding';
+  const playerCards = alive.reduce((n, p) => n + p.cardCount, 0);
+  startTurnClock(state, dealGraceMs(playerCards));
 
   const starter = state.players.find((p) => p.id === starterId);
   const starterName = starter ? starter.name : 'Unknown';
@@ -186,7 +223,8 @@ export function dealRound(
 export function gameReducer(state: GameState, action: GameAction): GameState {
   const nextState: GameState = {
     ...state,
-    settings: state.settings ? { ...state.settings } : { ...DEFAULT_RULES },
+    settings: { ...DEFAULT_SETTINGS, ...state.settings },
+    turnDeadline: state.turnDeadline ?? null,
     players: state.players.map((p) => ({ ...p })),
     hands: { ...state.hands },
     communityCards: [...state.communityCards],
@@ -323,6 +361,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       if (nextPlayer) {
         nextState.turnPlayerId = nextPlayer.id;
       }
+      startTurnClock(nextState);
 
       return nextState;
     }
@@ -365,6 +404,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       );
 
       nextState.phase = 'reveal';
+      nextState.turnDeadline = null;
       nextState.lastBsCallerId = bsCaller.id;
       nextState.revealData = {
         callerId: bsCaller.id,
@@ -476,6 +516,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       const remainingAlive = getAlivePlayers(nextState);
       if (remainingAlive.length <= 1) {
         nextState.phase = 'gameOver';
+        nextState.turnDeadline = null;
         nextState.winnerId = remainingAlive[0] ? remainingAlive[0].id : null;
         if (remainingAlive[0]) {
           appendLog(nextState, `${remainingAlive[0].name} wins!`);
@@ -542,6 +583,34 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       return nextState;
     }
 
+    case 'setTurnTimer': {
+      if (nextState.phase !== 'lobby') return nextState;
+      if (action.playerId !== nextState.hostPlayerId) return nextState;
+      if (!(TURN_TIMER_OPTIONS as readonly number[]).includes(action.seconds)) return nextState;
+      if (nextState.settings.turnSeconds === action.seconds) return nextState;
+      nextState.settings.turnSeconds = action.seconds;
+      // Like a rule change: everyone readies up again under the new timer.
+      for (const p of nextState.players) {
+        p.ready = false;
+      }
+      nextState.countdownDeadline = null;
+      appendLog(nextState, `Turn timer: ${action.seconds > 0 ? `${action.seconds} seconds` : 'off'}`);
+      return nextState;
+    }
+
+    case 'turnTimeout': {
+      if (nextState.phase !== 'bidding') return nextState;
+      if (nextState.turnPlayerId !== action.playerId) return nextState;
+      if (nextState.turnDeadline === null || nextState.turnDeadline !== action.deadline) return nextState;
+      const player = nextState.players.find((p) => p.id === action.playerId);
+      if (!player) return nextState;
+      appendLog(nextState, `${player.name} ran out of time`);
+      // Out of time: challenge the call on the table, or open with the lowest hand.
+      return nextState.currentCall
+        ? gameReducer(nextState, { type: 'bs', playerId: player.id })
+        : gameReducer(nextState, { type: 'call', playerId: player.id, hand: TIMEOUT_OPENING_HAND });
+    }
+
     case 'playAgain': {
       if (nextState.phase !== 'gameOver') return nextState;
 
@@ -556,6 +625,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       nextState.roundStarterId = null;
       nextState.winnerId = null;
       nextState.countdownDeadline = null;
+      nextState.turnDeadline = null;
 
       // Reset players
       for (const p of nextState.players) {

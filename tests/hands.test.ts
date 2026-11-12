@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { compareHands, normalForm, Hand, DEFAULT_RULES, Rules } from '../src/engine/hands';
+import { compareHands, normalForm, Hand, DEFAULT_RULES, Rules, handKindsHighToLow } from '../src/engine/hands';
 
 describe('compareHands', () => {
   it('orders categories correctly from low to high', () => {
@@ -146,5 +146,14 @@ describe('compareHands', () => {
     const flushHeart: Hand = { kind: 'flush', suit: 'h' };
     expect(compareHands(straightWheel, flushHeart, DEFAULT_RULES)).toBeLessThan(0);
     expect(compareHands(straightWheel, flushHeart, rules)).toBeGreaterThan(0);
+  });
+});
+
+describe('handKindsHighToLow', () => {
+  it('lists every hand from the highest, and swaps straight and flush under the house rule', () => {
+    expect(handKindsHighToLow()).toEqual([
+      'royalFlush', 'straightFlush', 'quads', 'fullHouse', 'flush', 'straight', 'trips', 'twoPair', 'pair', 'high',
+    ]);
+    expect(handKindsHighToLow({ straightBeatsFlush: true }).slice(4, 6)).toEqual(['straight', 'flush']);
   });
 });

@@ -1,4 +1,4 @@
-import { GameState, PlayerState } from './game';
+import { GameState, PlayerState, DEFAULT_SETTINGS } from './game';
 import { PlayerView, PlayerPublic, RevealViewData } from './protocol';
 import { Card } from './cards';
 
@@ -56,11 +56,6 @@ export function redact(state: GameState, viewerId: string | null): PlayerView {
     visibleHands[viewerId] = [...state.hands[viewerId]];
   }
 
-  let countdownSeconds: number | null = null;
-  if (state.countdownDeadline !== null) {
-    const diff = Math.ceil((state.countdownDeadline - Date.now()) / 1000);
-    countdownSeconds = Math.max(0, diff);
-  }
 
   let revealData: RevealViewData | null = null;
   if (state.revealData) {
@@ -97,8 +92,13 @@ export function redact(state: GameState, viewerId: string | null): PlayerView {
     lastBsCallerId: state.lastBsCallerId,
     revealData,
     winnerId: state.winnerId,
-    countdownSeconds: countdownSeconds,
+    countdownRemainingMs:
+      state.countdownDeadline !== null ? Math.max(0, state.countdownDeadline - Date.now()) : null,
+    turnRemainingMs:
+      state.phase === 'bidding' && state.turnDeadline != null
+        ? Math.max(0, state.turnDeadline - Date.now())
+        : null,
     log: [...state.log],
-    settings: state.settings ? { ...state.settings } : { straightBeatsFlush: false },
+    settings: { ...DEFAULT_SETTINGS, ...state.settings },
   };
 }
