@@ -48,12 +48,14 @@ The server is the source of truth for the game, and the host also plays.
    ```
 
 2. The command prints a game code, for example `ABCD`, and opens your host page in your browser.
+   To set your player name, add it to the command: `npm run host -- --name Nathan`.
 3. Send the code to your friends. They open the BSPoker site and enter it.
 4. Keep the terminal window open while you play. Press Ctrl+C to stop the server.
 
 If the code does not work for a friend, send them the "Direct link" that the command also prints.
 If everyone is on the same home wifi, `npm run host:lan` skips the public tunnel. Friends then open the "Same wifi" address that it prints.
 Use `npm run host -- --port 9000` to use a port other than 8787.
+Without `--name`, you join with the name that your browser last used on BSPoker, or "Host".
 
 ### How the connection works
 
