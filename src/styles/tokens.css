@@ -1,0 +1,20 @@
+:root {
+  --bg: #0a0e15;
+  --bg-glow: #121a26;
+  --surface: #111722;
+  --surface-2: #171f2d;
+  --border: #232d3f;
+  --text: #e4ebf5;
+  --muted: #8593a8;
+  --ice: #7dd3fc;
+  --mint: #86efac;
+  --coral: #fb7185;
+  --card-face: #e9eef6;
+  --card-ink: #1b2333;
+  --card-red: #e5486b;
+  --card-back: #15304d;
+  --card-back-border: #24507a;
+  --card-back-inner: #3d79ad;
+
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
