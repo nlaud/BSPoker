@@ -145,3 +145,46 @@ describe('lobby grace period', () => {
     }
   });
 });
+
+describe('server restarts', () => {
+  it('a tab from before a restart gets a clear error instead of a ghost seat', async () => {
+    const dist = fakeDist();
+    server = await startServer({ code: 'AAAA', port: 0, staticDir: dist, hostKey: 'k' });
+    const port = server.port;
+    const tab = join_('Mia');
+    await waitFor(() => tab.view());
+    let lastStatus = '';
+    tab.client.onStatus((s) => (lastStatus = s));
+    await server.close();
+    server = await startServer({ code: 'BBBB', port, staticDir: dist, hostKey: 'k2' });
+    await waitFor(() => (lastStatus === 'error' ? true : null), 8000);
+    expect(tab.client.errorMessage).toContain('The host restarted the game');
+    expect(server.session.state.players).toHaveLength(0);
+  });
+});
+
+describe('host Remove', () => {
+  it('removes an offline player mid-game and restarts the round without them', async () => {
+    const { HostSession } = await import('../src/net/host');
+    const host = new HostSession('ABCD', 'h');
+    const conns = ['Host', 'Ann', 'Zed'].map((name, i) => {
+      const c = new ClientSession('memory', name, { conn: host.memoryTransport.connectClient(), token: `t${i}` });
+      clients.push(c);
+      return c;
+    });
+    await sleep(20);
+    for (const c of conns) c.setReady(true);
+    await waitFor(() => (host.state.phase === 'bidding' ? true : null), 5000);
+    const zed = host.state.players.find((p) => p.name === 'Zed')!;
+    const dealSeq = host.state.dealSeq;
+    conns[2].destroy();
+    await waitFor(() => (host.state.players.find((p) => p.id === zed.id)?.connected === false ? true : null));
+    conns[0].kick(zed.id);
+    await waitFor(() => (host.state.players.find((p) => p.id === zed.id)?.eliminated ? true : null));
+    // The voided round is dealt again without Zed.
+    expect(host.state.dealSeq).toBe(dealSeq + 1);
+    expect(Object.keys(host.state.hands)).not.toContain(zed.id);
+    expect(host.state.log.some((l) => l.includes('Zed') && l.includes('removed'))).toBe(true);
+    host.destroy();
+  });
+});

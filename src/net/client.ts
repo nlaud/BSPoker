@@ -65,6 +65,8 @@ export class ClientSession {
   public errorMessage: string | null = null;
 
   private conn: Connection | null = null;
+  /** Server run this tab joined; a reconnect to a different run is a restart, not a rejoin. */
+  private serverId: string | null = null;
   private readonly hostKey: string | undefined;
   private isUsingMemoryConn = false;
 
@@ -140,6 +142,7 @@ export class ClientSession {
       name: this.name,
       hostKey: this.hostKey,
       protocolVersion: PROTOCOL_VERSION,
+      serverId: this.serverId ?? undefined,
     });
 
     // Start 5s ping
@@ -163,6 +166,14 @@ export class ClientSession {
         this.destroy();
         return;
       }
+      if (msg.serverId) {
+        if (this.serverId && this.serverId !== msg.serverId) {
+          this.setStatus('error', 'The host restarted the game. Join again with the new code.');
+          this.destroy();
+          return;
+        }
+        this.serverId = msg.serverId;
+      }
       this.playerId = msg.playerId;
       this.setStatus('connected');
       return;
@@ -183,6 +194,7 @@ export class ClientSession {
 
     if (msg.type === 'error') {
       this.setStatus('error', msg.message);
+      if (msg.fatal) this.destroy();
       return;
     }
 

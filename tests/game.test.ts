@@ -406,11 +406,39 @@ describe('gameReducer & redact', () => {
       state = gameReducer(state, { type: 'join', token: 'tok-3', name: 'Charlie', playerId: 'p3' });
       expect(state.countdownDeadline).toBeNull();
 
-      // Leave cancels
+      // A leave cancels the running countdown. When everyone left is ready,
+      // a fresh full countdown starts for them instead of the lobby sitting stuck.
       state = gameReducer(state, { type: 'setReady', playerId: 'p3', ready: true, now: 1000 });
       expect(state.countdownDeadline).toBe(4000);
       state = gameReducer(state, { type: 'leave', playerId: 'p3' });
+      expect(state.countdownDeadline).not.toBe(4000);
+      expect(state.countdownDeadline).toBeGreaterThan(Date.now() + 2000);
+
+      // When someone left is not ready, the leave just cancels it.
+      state = gameReducer(state, { type: 'join', token: 'tok-4', name: 'Dee', playerId: 'p4' });
+      state = gameReducer(state, { type: 'join', token: 'tok-5', name: 'Eve', playerId: 'p5' });
+      state = gameReducer(state, { type: 'setReady', playerId: 'p5', ready: true, now: 1000 });
+      state = gameReducer(state, { type: 'leave', playerId: 'p5' });
       expect(state.countdownDeadline).toBeNull();
+    });
+
+    it('starts the countdown when the last unready player drops out of the lobby', () => {
+      let state = createInitialState('ABCD', 'p1');
+      for (const [id, name] of [['p1', 'A'], ['p2', 'B'], ['p3', 'C']]) {
+        state = gameReducer(state, { type: 'join', token: `t-${id}`, name, playerId: id });
+      }
+      state = gameReducer(state, { type: 'setReady', playerId: 'p1', ready: true, now: 1000 });
+      state = gameReducer(state, { type: 'setReady', playerId: 'p2', ready: true, now: 1000 });
+      expect(state.countdownDeadline).toBeNull();
+      state = gameReducer(state, { type: 'setConnected', playerId: 'p3', connected: false });
+      state = gameReducer(state, { type: 'cleanDisconnectedInLobby', playerId: 'p3' });
+      expect(state.players.map((p) => p.id)).toEqual(['p1', 'p2']);
+      expect(state.countdownDeadline).not.toBeNull();
+      // Removing an unready player through the host's Remove does the same.
+      state = gameReducer(state, { type: 'join', token: 't-p4', name: 'D', playerId: 'p4' });
+      expect(state.countdownDeadline).toBeNull();
+      state = gameReducer(state, { type: 'kick', playerId: 'p4' });
+      expect(state.countdownDeadline).not.toBeNull();
     });
 
     it('deadline re-check prevents start if a player is not ready', () => {

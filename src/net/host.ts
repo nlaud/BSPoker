@@ -27,6 +27,8 @@ export interface HostSessionOptions {
   hostKey?: string;
   /** Called after every state change, for logging. */
   onChange?: (state: GameState) => void;
+  /** Identifies this server run; defaults to a random id. */
+  serverId?: string;
 }
 
 /**
@@ -40,6 +42,7 @@ export class HostSession {
   public readonly memoryTransport: MemoryHostTransport;
 
   private readonly hostKey: string | undefined;
+  public readonly serverId: string;
   private readonly onChange: ((state: GameState) => void) | undefined;
   private readonly transports: HostTransport[];
   private connections = new Map<string, Connection>();
@@ -49,6 +52,8 @@ export class HostSession {
   private unsubs: Unsub[] = [];
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private countdownTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The countdown deadline the running timer was set for. */
+  private countdownTimerDeadline: number | null = null;
   private revealTimeouts: ReturnType<typeof setTimeout>[] = [];
   private lobbyGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private isDestroyed = false;
@@ -56,6 +61,7 @@ export class HostSession {
   constructor(code: string, hostPlayerId: string, options: HostSessionOptions = {}) {
     this.lobbyCode = code.toUpperCase();
     this.hostKey = options.hostKey;
+    this.serverId = options.serverId ?? `s-${Math.random().toString(36).slice(2, 10)}`;
     this.onChange = options.onChange;
     this.state = createInitialState(this.lobbyCode, hostPlayerId);
     this.memoryTransport = new MemoryHostTransport();
@@ -113,7 +119,6 @@ export class HostSession {
         const p = this.state.players.find((player) => player.id === playerId);
         if (this.state.phase === 'lobby' && p && !p.connected) {
           this.dispatch({ type: 'cleanDisconnectedInLobby', playerId });
-          this.checkCountdown();
         }
       }, LOBBY_GRACE_MS),
     );
@@ -169,6 +174,17 @@ export class HostSession {
           type: 'error',
           message:
             'The host is running a different version of BSPoker. Ask them to update it (git pull) and restart npm run host.',
+          fatal: true,
+        } satisfies HostMessage);
+        conn.close();
+        return;
+      }
+      if (msg.serverId && msg.serverId !== this.serverId) {
+        // A tab from before a restart: do not turn it into a ghost seat.
+        conn.send({
+          type: 'error',
+          message: 'The host restarted the game. Join again with the new code.',
+          fatal: true,
         } satisfies HostMessage);
         conn.close();
         return;
@@ -178,7 +194,12 @@ export class HostSession {
       this.dispatch({ type: 'join', token, name: msg.name, playerId });
       this.connToPlayer.set(connId, playerId);
       this.lastPing.set(playerId, Date.now());
-      conn.send({ type: 'welcome', playerId, protocolVersion: PROTOCOL_VERSION } satisfies HostMessage);
+      conn.send({
+        type: 'welcome',
+        playerId,
+        protocolVersion: PROTOCOL_VERSION,
+        serverId: this.serverId,
+      } satisfies HostMessage);
       this.broadcast();
       return;
     }
@@ -192,7 +213,6 @@ export class HostSession {
     switch (msg.type) {
       case 'setReady': {
         this.dispatch({ type: 'setReady', playerId, ready: msg.ready, now: Date.now() });
-        this.checkCountdown();
         break;
       }
       case 'peek': {
@@ -226,7 +246,6 @@ export class HostSession {
       }
       case 'setRule': {
         this.dispatch({ type: 'setRule', playerId, rule: msg.rule, value: msg.value });
-        this.checkCountdown();
         break;
       }
     }
@@ -237,36 +256,37 @@ export class HostSession {
     this.state = gameReducer(this.state, action);
     this.onChange?.(this.state);
     this.broadcast();
+    // Any change can start, move or cancel the lobby countdown (ready, join,
+    // leave, Remove, a timed-out seat), so keep the timer in step with it.
+    this.checkCountdown();
+  }
+
+  private clearCountdownTimer(): void {
+    if (this.countdownTimer) clearTimeout(this.countdownTimer);
+    this.countdownTimer = null;
+    this.countdownTimerDeadline = null;
   }
 
   private checkCountdown(): void {
-    if (this.state.phase !== 'lobby') {
-      if (this.countdownTimer) {
-        clearTimeout(this.countdownTimer);
-        this.countdownTimer = null;
-      }
+    const deadline = this.state.phase === 'lobby' ? this.state.countdownDeadline : null;
+    if (deadline === null) {
+      this.clearCountdownTimer();
       return;
     }
-
-    if (this.state.countdownDeadline !== null) {
-      if (!this.countdownTimer) {
-        const remaining = Math.max(0, this.state.countdownDeadline - Date.now());
-        this.countdownTimer = setTimeout(() => {
-          this.countdownTimer = null;
-          if (this.state.phase === 'lobby' && this.state.countdownDeadline !== null) {
-            const seated = this.state.players.filter((p) => !p.isSpectator);
-            if (seated.length >= 2 && seated.every((p) => p.ready)) {
-              this.dispatch({ type: 'startGame' });
-            } else {
-              this.dispatch({ type: 'cancelCountdown' });
-            }
-          }
-        }, remaining);
-      }
-    } else if (this.countdownTimer) {
-      clearTimeout(this.countdownTimer);
+    if (this.countdownTimer && this.countdownTimerDeadline === deadline) return;
+    this.clearCountdownTimer();
+    this.countdownTimerDeadline = deadline;
+    this.countdownTimer = setTimeout(() => {
       this.countdownTimer = null;
-    }
+      this.countdownTimerDeadline = null;
+      if (this.state.phase !== 'lobby' || this.state.countdownDeadline === null) return;
+      const seated = this.state.players.filter((p) => !p.isSpectator);
+      if (seated.length >= 2 && seated.every((p) => p.ready)) {
+        this.dispatch({ type: 'startGame' });
+      } else {
+        this.dispatch({ type: 'cancelCountdown' });
+      }
+    }, Math.max(0, deadline - Date.now()));
   }
 
   private startRevealSequence(): void {
@@ -322,7 +342,7 @@ export class HostSession {
     if (this.isDestroyed) return;
     this.isDestroyed = true;
     if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
-    if (this.countdownTimer) clearTimeout(this.countdownTimer);
+    this.clearCountdownTimer();
     for (const t of this.revealTimeouts) clearTimeout(t);
     this.revealTimeouts = [];
     for (const t of this.lobbyGraceTimers.values()) clearTimeout(t);

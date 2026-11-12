@@ -9,6 +9,8 @@ export interface LobbyProps {
   onSetReady: (ready: boolean) => void;
   onLeave: () => void;
   onSetRule?: (rule: 'straightBeatsFlush', value: boolean) => void;
+  /** Host only: free an offline player's seat right away. */
+  onKick?: (playerId: string) => void;
 }
 
 export const Lobby: React.FC<LobbyProps> = ({
@@ -16,6 +18,7 @@ export const Lobby: React.FC<LobbyProps> = ({
   onSetReady,
   onLeave,
   onSetRule,
+  onKick,
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -107,6 +110,16 @@ export const Lobby: React.FC<LobbyProps> = ({
                     {!p.connected && <span className="badge-offline">offline</span>}
                   </div>
                   <div className="player-status">
+                    {view.isHost && !p.connected && !isMe && onKick && (
+                      <button
+                        type="button"
+                        className="btn-kick"
+                        onClick={() => onKick(p.id)}
+                        aria-label={`Remove ${p.name}`}
+                      >
+                        Remove
+                      </button>
+                    )}
                     <span className={`status-pill ${p.ready ? 'is-ready' : 'not-ready'}`}>
                       {p.ready ? 'Ready' : 'Not ready'}
                     </span>
