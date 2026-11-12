@@ -28,6 +28,9 @@ const FLIGHT_MS = 300;
 const COMMUNITY_FLIP_DELAY_MS = 120;
 /** The shuffle plays first; the first card leaves the deck this long after it starts. */
 const SHUFFLE_LEAD_MS = 450;
+/** The deck glides between the table center and its spot beside the community cards. */
+const DECK_MOVE_MS = 280;
+const COMMUNITY_GAP_MS = 160;
 const ELIMINATION_SOUND_DELAY_MS = 450;
 
 type DealTarget =
@@ -144,15 +147,18 @@ export const Table: React.FC<TableProps> = ({
   const [communityDealtCount, setCommunityDealtCount] = useState<number>(2);
   const [communityFaceUpCount, setCommunityFaceUpCount] = useState<number>(2);
   const [flights, setFlights] = useState<Flight[]>([]);
+  const [deckAtSide, setDeckAtSide] = useState(true);
 
   const prevTurnRef = useRef<string | null>(null);
   const dealTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const deckRef = useRef<HTMLDivElement | null>(null);
   const flightIdRef = useRef(0);
 
-  // Deal animation every round: card backs fly one at a time from the deck at
-  // the table center to each seat (round-robin, clockwise from the starter),
-  // then the two community cards fly in face down and flip face up.
+  // Deal animation every round. The deck glides from its spot beside the
+  // community cards to the table center while it shuffles, card backs fly one
+  // at a time to each seat (round-robin, clockwise from the starter), then the
+  // deck glides back to the side and deals the two community cards face down
+  // into the center, where they flip face up. The deck stays on the table.
   useEffect(() => {
     const clearDeal = () => {
       dealTimeoutsRef.current.forEach(clearTimeout);
@@ -163,6 +169,7 @@ export const Table: React.FC<TableProps> = ({
     if (view.phase !== 'bidding') {
       clearDeal();
       setIsDealing(false);
+      setDeckAtSide(true);
       setCommunityDealtCount(2);
       setCommunityFaceUpCount(2);
       return;
@@ -175,16 +182,8 @@ export const Table: React.FC<TableProps> = ({
     setSeenDealSeq(view.lobbyCode, view.dealSeq);
     if (seen === null || view.dealSeq <= seen) return;
     clearDeal();
-
-    const prefersReduced =
-      typeof window !== 'undefined' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (prefersReduced) {
-      setIsDealing(false);
-      setCommunityDealtCount(2);
-      setCommunityFaceUpCount(2);
-      return;
-    }
+    // The deal animates even when the OS asks for reduced motion (for example
+    // Windows "Animation effects" off): dealing is part of the game itself.
 
     const starter = view.players.find((p) => p.id === view.turnPlayerId) || view.players[0];
     const startSeat = starter ? starter.seatIndex : 0;
@@ -194,18 +193,22 @@ export const Table: React.FC<TableProps> = ({
         (a, b) => ((a.seatIndex - startSeat + 8) % 8) - ((b.seatIndex - startSeat + 8) % 8),
       );
 
-    const queue: DealTarget[] = [];
+    const playerQueue: DealTarget[] = [];
     const maxCards = Math.max(0, ...alive.map((p) => p.cardCount));
     for (let pass = 0; pass < maxCards; pass++) {
       for (const p of alive) {
-        if (pass < p.cardCount) queue.push({ kind: 'player', playerId: p.id, index: pass });
+        if (pass < p.cardCount) playerQueue.push({ kind: 'player', playerId: p.id, index: pass });
       }
     }
-    queue.push({ kind: 'community', index: 0 }, { kind: 'community', index: 1 });
-
-    const stagger = Math.min(90, Math.floor(DEAL_BUDGET_MS / queue.length));
+    const communityQueue: DealTarget[] = [
+      { kind: 'community', index: 0 },
+      { kind: 'community', index: 1 },
+    ];
+    const totalCards = playerQueue.length + communityQueue.length;
+    const stagger = Math.min(90, Math.floor(DEAL_BUDGET_MS / Math.max(1, playerQueue.length)));
 
     setIsDealing(true);
+    setDeckAtSide(false);
     setCommunityDealtCount(0);
     setCommunityFaceUpCount(0);
     const initialCounts: Record<string, number> = {};
@@ -228,11 +231,10 @@ export const Table: React.FC<TableProps> = ({
       }
     };
 
-    playShuffle();
-    queue.forEach((target, idx) => {
+    const launch = (target: DealTarget, idx: number, at: number) => {
       const t = setTimeout(() => {
         const flight = measureFlight(deckRef.current, target, flightIdRef.current++);
-        playDealCard(idx, queue.length);
+        playDealCard(idx, totalCards);
         if (!flight) {
           land(target);
           return;
@@ -243,12 +245,28 @@ export const Table: React.FC<TableProps> = ({
           land(target);
         }, FLIGHT_MS);
         dealTimeoutsRef.current.push(done);
-      }, SHUFFLE_LEAD_MS + idx * stagger);
+      }, at);
       dealTimeoutsRef.current.push(t);
-    });
+    };
+
+    playShuffle();
+    playerQueue.forEach((target, idx) => launch(target, idx, SHUFFLE_LEAD_MS + idx * stagger));
+
+    // The deck returns to the side, then deals the community cards from there.
+    const deckBackAt = SHUFFLE_LEAD_MS + playerQueue.length * stagger;
+    const tDeck = setTimeout(() => setDeckAtSide(true), deckBackAt);
+    dealTimeoutsRef.current.push(tDeck);
+    const communityAt = deckBackAt + DECK_MOVE_MS;
+    communityQueue.forEach((target, i) =>
+      launch(target, playerQueue.length + i, communityAt + i * COMMUNITY_GAP_MS),
+    );
 
     const endDealTime =
-      SHUFFLE_LEAD_MS + (queue.length - 1) * stagger + FLIGHT_MS + COMMUNITY_FLIP_DELAY_MS + 280;
+      communityAt +
+      (communityQueue.length - 1) * COMMUNITY_GAP_MS +
+      FLIGHT_MS +
+      COMMUNITY_FLIP_DELAY_MS +
+      280;
     const tEnd = setTimeout(() => setIsDealing(false), endDealTime);
     dealTimeoutsRef.current.push(tEnd);
     // Only a new round may start a deal; other view changes must not restart it.
@@ -491,8 +509,12 @@ export const Table: React.FC<TableProps> = ({
               </div>
             );
           })}
-          {isDealing && (
-            <div className="deal-deck" ref={deckRef} aria-hidden="true">
+          {(view.phase === 'bidding' || view.phase === 'reveal') && (
+            <div
+              className={`deal-deck ${deckAtSide ? 'at-side' : 'at-center'}`}
+              ref={deckRef}
+              aria-hidden="true"
+            >
               <CardComponent faceDown size="community" />
               <CardComponent faceDown size="community" />
               <CardComponent faceDown size="community" />

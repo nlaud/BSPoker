@@ -1248,24 +1248,6 @@ input {
 }
 
 /* Prefers reduced motion */
-@media (prefers-reduced-motion: reduce) {
-  .card-inner {
-    transition: none;
-  }
-  .your-turn-overlay {
-    animation: none;
-    opacity: 0.8;
-  }
-  .countdown-banner {
-    animation: none;
-  }
-  .bs-button.is-triggered {
-    animation: none;
-  }
-  .log-drawer-panel {
-    animation: none;
-  }
-}
 
 /* ---------- Seat card slots (cards never overlap the seat label) ---------- */
 .seat-cards-wrapper {
@@ -1304,11 +1286,32 @@ input {
   position: relative;
 }
 .deal-deck {
+  /* The deck's center point: beside the community cards between deals, and at
+     the table center while it deals to the players. */
+  --deck-side-gap: 18px;
   position: absolute;
-  left: 50%;
   top: 50%;
-  transform: translate(-50%, -50%);
+  width: 0;
+  height: 0;
   pointer-events: none;
+  transition:
+    left 280ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.deal-deck.at-center {
+  left: 50%;
+}
+.deal-deck.at-side {
+  left: calc(100% + var(--deck-side-gap) + 36px);
+}
+@media (max-width: 639px) {
+  .deal-deck {
+    --deck-side-gap: 10px;
+  }
+  .deal-deck.at-side {
+    left: calc(100% + var(--deck-side-gap) + 28px);
+    transform: scale(0.9);
+  }
 }
 .deal-deck > .card-wrapper {
   position: absolute;
@@ -1346,21 +1349,6 @@ input {
   }
 }
 
-/* Reduced motion: no flying deal, the freshly dealt cards just fade in. */
-@media (prefers-reduced-motion: reduce) {
-  .deal-slot,
-  .seat-card-slot {
-    animation: dealFadeIn 220ms ease-out;
-  }
-  @keyframes dealFadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-}
 
 @media (max-width: 639px) {
   /* Top seats sit below the top bar so the code chip never covers a seat. */
