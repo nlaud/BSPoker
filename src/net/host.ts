@@ -1,16 +1,13 @@
-import {
-  GameState,
-  createInitialState,
-  gameReducer,
-  GameAction,
-} from '../engine/game';
+import { GameState, createInitialState, gameReducer, GameAction } from '../engine/game';
 import { redact } from '../engine/view';
-import { ClientMessage, HostMessage } from '../engine/protocol';
-import { Connection, Unsub } from './transport';
-import { PeerHostTransport } from './peerTransport';
+import { ClientMessage, HostMessage, PROTOCOL_VERSION } from '../engine/protocol';
+import { Connection, HostTransport, Unsub } from './transport';
 import { MemoryHostTransport } from './memoryTransport';
 
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ';
+
+/** A player who leaves the lobby (tab closed) keeps their seat this long for a refresh. */
+export const LOBBY_GRACE_MS = 15000;
 
 export function generateLobbyCode(): string {
   let code = '';
@@ -20,116 +17,59 @@ export function generateLobbyCode(): string {
   return code;
 }
 
-export interface SavedHostData {
-  state: GameState;
-  savedAt: number;
+export interface HostSessionOptions {
+  /** Extra transports to accept players on (for example the server's WebSocket transport). */
+  transports?: HostTransport[];
+  /**
+   * When set, only a join that presents this key takes the host seat. Without
+   * it (tests, in-memory games) the first player to join becomes the host.
+   */
+  hostKey?: string;
+  /** Called after every state change, for logging. */
+  onChange?: (state: GameState) => void;
 }
 
-export function saveHostState(code: string, state: GameState): void {
-  try {
-    if (typeof localStorage === 'undefined' || typeof sessionStorage === 'undefined') return;
-    const data: SavedHostData = {
-      state,
-      savedAt: Date.now(),
-    };
-    localStorage.setItem(`bspoker:host:${code.toUpperCase()}`, JSON.stringify(data));
-    sessionStorage.setItem('bspoker:hostOf', code.toUpperCase());
-  } catch (err) {
-    console.error('Failed to save host state:', err);
-  }
-}
-
-export function loadHostState(code: string): SavedHostData | null {
-  try {
-    if (typeof localStorage === 'undefined') return null;
-    const raw = localStorage.getItem(`bspoker:host:${code.toUpperCase()}`);
-    if (!raw) return null;
-    const data = JSON.parse(raw) as SavedHostData;
-    // Less than 2 hours old
-    const twoHours = 2 * 60 * 60 * 1000;
-    if (Date.now() - data.savedAt > twoHours) {
-      clearHostState(code);
-      return null;
-    }
-    return data;
-  } catch (err) {
-    console.error('Failed to load host state:', err);
-    return null;
-  }
-}
-
-export function clearHostState(code: string): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(`bspoker:host:${code.toUpperCase()}`);
-    }
-    if (typeof sessionStorage !== 'undefined') {
-      if (sessionStorage.getItem('bspoker:hostOf') === code.toUpperCase()) {
-        sessionStorage.removeItem('bspoker:hostOf');
-      }
-    }
-  } catch {
-    // ignore
-  }
-}
-
+/**
+ * The authoritative game: owns the GameState, applies client intents through
+ * the pure reducer, drives the timers, and sends every connection its own
+ * redacted view after each change. It runs inside the host's server.
+ */
 export class HostSession {
   public state: GameState;
-  public lobbyCode: string;
+  public readonly lobbyCode: string;
+  public readonly memoryTransport: MemoryHostTransport;
+
+  private readonly hostKey: string | undefined;
+  private readonly onChange: ((state: GameState) => void) | undefined;
+  private readonly transports: HostTransport[];
   private connections = new Map<string, Connection>();
   private connToPlayer = new Map<string, string>();
-  private playerToConn = new Map<string, string>();
   private lastPing = new Map<string, number>();
 
-  private peerTransport: PeerHostTransport | null = null;
-  public memoryTransport: MemoryHostTransport;
-
   private unsubs: Unsub[] = [];
-  private heartbeatInterval: NodeJS.Timeout | null = null;
-  private countdownTimer: NodeJS.Timeout | null = null;
-  private revealTimeouts: NodeJS.Timeout[] = [];
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private countdownTimer: ReturnType<typeof setTimeout> | null = null;
+  private revealTimeouts: ReturnType<typeof setTimeout>[] = [];
+  private lobbyGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private isDestroyed = false;
 
-  constructor(
-    code: string,
-    hostPlayerId: string,
-    existingState?: GameState,
-    usePeerTransport = true
-  ) {
+  constructor(code: string, hostPlayerId: string, options: HostSessionOptions = {}) {
     this.lobbyCode = code.toUpperCase();
-    this.state = existingState || createInitialState(this.lobbyCode, hostPlayerId);
-    if (!this.state.settings) {
-      this.state.settings = { straightBeatsFlush: false };
-    }
+    this.hostKey = options.hostKey;
+    this.onChange = options.onChange;
+    this.state = createInitialState(this.lobbyCode, hostPlayerId);
     this.memoryTransport = new MemoryHostTransport();
+    this.transports = [this.memoryTransport, ...(options.transports ?? [])];
 
-    // Listen on memory transport
-    this.unsubs.push(
-      this.memoryTransport.onConnection((conn) => this.handleNewConnection(conn))
-    );
-
-    // Listen on PeerJS transport if enabled
-    if (usePeerTransport && typeof window !== 'undefined') {
-      this.peerTransport = new PeerHostTransport(this.lobbyCode, () => {
-        console.warn('Peer ID collision on host transport');
-      });
-      this.unsubs.push(
-        this.peerTransport.onConnection((conn) => this.handleNewConnection(conn))
-      );
+    for (const transport of this.transports) {
+      this.unsubs.push(transport.onConnection((conn) => this.handleNewConnection(conn)));
     }
 
-    // Start heartbeat monitor
     this.heartbeatInterval = setInterval(() => this.checkHeartbeats(), 5000);
+  }
 
-    // Save initial state
-    saveHostState(this.lobbyCode, this.state);
-
-    // Update URL query string
-    if (typeof window !== 'undefined' && window.history) {
-      const url = new URL(window.location.href);
-      url.searchParams.set('lobby', this.lobbyCode);
-      window.history.replaceState({}, '', url.toString());
-    }
+  public get connectionCount(): number {
+    return this.connections.size;
   }
 
   private handleNewConnection(conn: Connection): void {
@@ -151,16 +91,59 @@ export class HostSession {
     this.connections.delete(connId);
     const playerId = this.connToPlayer.get(connId);
     if (!playerId) return;
-
     this.connToPlayer.delete(connId);
-    this.playerToConn.delete(playerId);
+    // Another connection may already serve this player (for example a refresh
+    // that reconnected before the old socket closed).
+    if ([...this.connToPlayer.values()].includes(playerId)) return;
+    this.dispatch({ type: 'setConnected', playerId, connected: false });
+    this.scheduleLobbyRemoval(playerId);
+  }
 
-    if (this.state.phase === 'lobby') {
-      // In lobby, mark disconnected. Grace period removes after 15s
-      this.dispatch({ type: 'setConnected', playerId, connected: false });
-    } else {
-      this.dispatch({ type: 'setConnected', playerId, connected: false });
+  /**
+   * In the lobby, an offline player would block "everyone ready" forever, so
+   * their seat is freed after a short grace period unless they come back.
+   */
+  private scheduleLobbyRemoval(playerId: string): void {
+    if (this.state.phase !== 'lobby') return;
+    this.cancelLobbyRemoval(playerId);
+    this.lobbyGraceTimers.set(
+      playerId,
+      setTimeout(() => {
+        this.lobbyGraceTimers.delete(playerId);
+        const p = this.state.players.find((player) => player.id === playerId);
+        if (this.state.phase === 'lobby' && p && !p.connected) {
+          this.dispatch({ type: 'cleanDisconnectedInLobby', playerId });
+          this.checkCountdown();
+        }
+      }, LOBBY_GRACE_MS),
+    );
+  }
+
+  private cancelLobbyRemoval(playerId: string): void {
+    const t = this.lobbyGraceTimers.get(playerId);
+    if (t) clearTimeout(t);
+    this.lobbyGraceTimers.delete(playerId);
+  }
+
+  /** Player id for a join, honoring the host key when one is configured. */
+  private resolveJoin(msg: Extract<ClientMessage, { type: 'join' }>): { playerId: string; token: string } {
+    const hostId = this.state.hostPlayerId;
+    const claimsHost = this.hostKey !== undefined && msg.hostKey === this.hostKey;
+
+    if (claimsHost) {
+      // The host may come back from a new tab or device: reuse the host seat.
+      const hostPlayer = this.state.players.find((p) => p.id === hostId);
+      return { playerId: hostId, token: hostPlayer ? hostPlayer.token : msg.token };
     }
+
+    const existing = this.state.players.find((p) => p.token === msg.token);
+    if (existing) return { playerId: existing.id, token: msg.token };
+
+    const firstJoinBecomesHost = this.hostKey === undefined && this.state.players.length === 0;
+    return {
+      playerId: firstJoinBecomesHost ? hostId : `p-${Math.random().toString(36).slice(2, 9)}`,
+      token: msg.token,
+    };
   }
 
   private handleClientMessage(connId: string, msg: ClientMessage): void {
@@ -181,35 +164,21 @@ export class HostSession {
     }
 
     if (msg.type === 'join') {
-      const existing = this.state.players.find((p) => p.token === msg.token);
-      let assignedId: string;
-
-      if (existing) {
-        assignedId = existing.id;
-        this.dispatch({
-          type: 'join',
-          token: msg.token,
-          name: msg.name,
-          playerId: assignedId,
-        });
-      } else {
-        assignedId =
-          this.state.players.length === 0
-            ? this.state.hostPlayerId
-            : `p-${Math.random().toString(36).slice(2, 9)}`;
-        this.dispatch({
-          type: 'join',
-          token: msg.token,
-          name: msg.name,
-          playerId: assignedId,
-        });
+      if (msg.protocolVersion !== PROTOCOL_VERSION) {
+        conn.send({
+          type: 'error',
+          message:
+            'The host is running a different version of BSPoker. Ask them to update it (git pull) and restart npm run host.',
+        } satisfies HostMessage);
+        conn.close();
+        return;
       }
-
-      this.connToPlayer.set(connId, assignedId);
-      this.playerToConn.set(assignedId, connId);
-      this.lastPing.set(assignedId, Date.now());
-
-      conn.send({ type: 'welcome', playerId: assignedId } satisfies HostMessage);
+      const { playerId, token } = this.resolveJoin(msg);
+      this.cancelLobbyRemoval(playerId);
+      this.dispatch({ type: 'join', token, name: msg.name, playerId });
+      this.connToPlayer.set(connId, playerId);
+      this.lastPing.set(playerId, Date.now());
+      conn.send({ type: 'welcome', playerId, protocolVersion: PROTOCOL_VERSION } satisfies HostMessage);
       this.broadcast();
       return;
     }
@@ -266,7 +235,7 @@ export class HostSession {
   public dispatch(action: GameAction): void {
     if (this.isDestroyed) return;
     this.state = gameReducer(this.state, action);
-    saveHostState(this.lobbyCode, this.state);
+    this.onChange?.(this.state);
     this.broadcast();
   }
 
@@ -294,109 +263,74 @@ export class HostSession {
           }
         }, remaining);
       }
-    } else {
-      if (this.countdownTimer) {
-        clearTimeout(this.countdownTimer);
-        this.countdownTimer = null;
-      }
+    } else if (this.countdownTimer) {
+      clearTimeout(this.countdownTimer);
+      this.countdownTimer = null;
     }
   }
 
   private startRevealSequence(): void {
-    for (const t of this.revealTimeouts) {
-      clearTimeout(t);
-    }
+    for (const t of this.revealTimeouts) clearTimeout(t);
     this.revealTimeouts = [];
 
     const order = this.state.revealData?.revealOrder || [];
     // 600 ms per hand flip in revealOrder
     for (let i = 1; i <= order.length; i++) {
-      const t = setTimeout(() => {
-        if (this.state.phase === 'reveal') {
-          this.dispatch({ type: 'revealStep' });
-        }
-      }, i * 600);
-      this.revealTimeouts.push(t);
+      this.revealTimeouts.push(
+        setTimeout(() => {
+          if (this.state.phase === 'reveal') this.dispatch({ type: 'revealStep' });
+        }, i * 600),
+      );
     }
 
-    // After all flips, show verdict
+    // After all flips, show the verdict, hold it 3.5 s, then resolve.
     const flipsDoneTime = order.length * 600;
-    const verdictTimeout = setTimeout(() => {
-      if (this.state.phase === 'reveal') {
-        this.dispatch({ type: 'showVerdict' });
-      }
-    }, flipsDoneTime);
-    this.revealTimeouts.push(verdictTimeout);
-
-    // Hold verdict for 3500 ms, then resolveReveal
-    const resolveTimeout = setTimeout(() => {
-      if (this.state.phase === 'reveal') {
-        this.dispatch({ type: 'resolveReveal' });
-      }
-    }, flipsDoneTime + 3500);
-    this.revealTimeouts.push(resolveTimeout);
+    this.revealTimeouts.push(
+      setTimeout(() => {
+        if (this.state.phase === 'reveal') this.dispatch({ type: 'showVerdict' });
+      }, flipsDoneTime),
+      setTimeout(() => {
+        if (this.state.phase === 'reveal') this.dispatch({ type: 'resolveReveal' });
+      }, flipsDoneTime + 3500),
+    );
   }
 
   private checkHeartbeats(): void {
     if (this.isDestroyed) return;
     const now = Date.now();
     let changed = false;
-
     for (const p of this.state.players) {
       const last = this.lastPing.get(p.id) || 0;
       if (now - last > 15000 && p.connected) {
         p.connected = false;
         changed = true;
+        this.scheduleLobbyRemoval(p.id);
       }
     }
-
-    if (changed) {
-      saveHostState(this.lobbyCode, this.state);
-      this.broadcast();
-    }
+    if (changed) this.broadcast();
   }
 
   public broadcast(): void {
     if (this.isDestroyed) return;
-
     for (const [connId, conn] of this.connections.entries()) {
       const playerId = this.connToPlayer.get(connId) || null;
-      const view = redact(this.state, playerId);
-      conn.send({ type: 'view', view } satisfies HostMessage);
+      conn.send({ type: 'view', view: redact(this.state, playerId) } satisfies HostMessage);
     }
   }
 
   public destroy(): void {
     if (this.isDestroyed) return;
     this.isDestroyed = true;
-
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
-    if (this.countdownTimer) {
-      clearTimeout(this.countdownTimer);
-      this.countdownTimer = null;
-    }
-    for (const t of this.revealTimeouts) {
-      clearTimeout(t);
-    }
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+    if (this.countdownTimer) clearTimeout(this.countdownTimer);
+    for (const t of this.revealTimeouts) clearTimeout(t);
     this.revealTimeouts = [];
-
-    for (const unsub of this.unsubs) {
-      unsub();
-    }
+    for (const t of this.lobbyGraceTimers.values()) clearTimeout(t);
+    this.lobbyGraceTimers.clear();
+    for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
-
-    for (const conn of this.connections.values()) {
-      conn.close();
-    }
+    for (const conn of this.connections.values()) conn.close();
     this.connections.clear();
-
-    if (this.peerTransport) {
-      this.peerTransport.close();
-      this.peerTransport = null;
-    }
-    this.memoryTransport.close();
+    for (const transport of this.transports) transport.close();
   }
 }
