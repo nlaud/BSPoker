@@ -1,18 +1,55 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Hand, Rules, handKindsHighToLow } from '../engine/hands';
+import { Rank, Suit, SUIT_SYMBOLS } from '../engine/cards';
 
-const HAND_INFO: Record<Hand['kind'], { name: string; example: string; detail: string }> = {
-  royalFlush: { name: 'Royal Flush', example: 'Royal Flush', detail: '10 to Ace, one suit' },
-  straightFlush: { name: 'Straight Flush', example: 'Straight Flush, 5 to 9', detail: 'Five in a row, one suit' },
-  quads: { name: 'Four of a Kind', example: 'Four Kings', detail: 'Four of one rank' },
-  fullHouse: { name: 'Full House', example: 'Full House, Three Nines and Two Aces', detail: 'Three of one rank, two of another' },
-  flush: { name: 'Flush', example: 'Flush of Hearts', detail: 'Five of one suit. All flushes tie' },
-  straight: { name: 'Straight', example: 'Straight, 5 to 9', detail: 'Five ranks in a row. Ace is high or low' },
-  trips: { name: 'Three of a Kind', example: 'Three Queens', detail: 'Three of one rank' },
-  twoPair: { name: 'Two Pair', example: 'Two Pair, Aces and Kings', detail: 'Two of one rank, two of another' },
-  pair: { name: 'Pair', example: 'Pair of Nines', detail: 'Two of one rank' },
-  high: { name: 'High Card', example: 'Ace High', detail: 'One card of that rank' },
+type MiniCard = [Rank, Suit];
+
+/** Each hand's name, its normal form (for the tooltip) and the cards that make it, in groups. */
+const HAND_INFO: Record<Hand['kind'], { name: string; example: string; groups: MiniCard[][] }> = {
+  royalFlush: {
+    name: 'Royal Flush',
+    example: 'Royal Flush',
+    groups: [[[10, 's'], [11, 's'], [12, 's'], [13, 's'], [14, 's']]],
+  },
+  straightFlush: {
+    name: 'Straight Flush',
+    example: 'Straight Flush, 5 to 9',
+    groups: [[[5, 'h'], [6, 'h'], [7, 'h'], [8, 'h'], [9, 'h']]],
+  },
+  quads: { name: 'Four of a Kind', example: 'Four Kings', groups: [[[13, 's'], [13, 'h'], [13, 'd'], [13, 'c']]] },
+  fullHouse: {
+    name: 'Full House',
+    example: 'Full House, Three Nines and Two Aces',
+    groups: [[[9, 's'], [9, 'h'], [9, 'd']], [[14, 'c'], [14, 'h']]],
+  },
+  flush: {
+    name: 'Flush',
+    example: 'Flush of Hearts',
+    groups: [[[2, 'h'], [6, 'h'], [9, 'h'], [11, 'h'], [13, 'h']]],
+  },
+  straight: {
+    name: 'Straight',
+    example: 'Straight, 5 to 9',
+    groups: [[[5, 'c'], [6, 'd'], [7, 's'], [8, 'h'], [9, 'c']]],
+  },
+  trips: { name: 'Three of a Kind', example: 'Three Queens', groups: [[[12, 's'], [12, 'h'], [12, 'd']]] },
+  twoPair: {
+    name: 'Two Pair',
+    example: 'Two Pair, Aces and Kings',
+    groups: [[[14, 's'], [14, 'd']], [[13, 'c'], [13, 'h']]],
+  },
+  pair: { name: 'Pair', example: 'Pair of Nines', groups: [[[9, 's'], [9, 'h']]] },
+  high: { name: 'High Card', example: 'Ace High', groups: [[[14, 's']]] },
 };
+
+const RANK_LABEL: Partial<Record<Rank, string>> = { 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
+
+const MiniCardFace: React.FC<{ card: MiniCard }> = ({ card: [rank, suit] }) => (
+  <span className={`mini-card ${suit === 'h' || suit === 'd' ? 'card-red' : 'card-black'}`}>
+    <span className="mini-card-rank">{RANK_LABEL[rank] ?? rank}</span>
+    <span className="mini-card-suit">{SUIT_SYMBOLS[suit]}</span>
+  </span>
+);
 
 export interface HandRankingsProps {
   rules: Rules;
@@ -76,16 +113,21 @@ export const HandRankings: React.FC<HandRankingsProps> = ({ rules }) => {
               const info = HAND_INFO[kind];
               const moved = rules.straightBeatsFlush && (kind === 'straight' || kind === 'flush');
               return (
-                <li key={kind} className="hand-rank-row">
+                <li key={kind} className="hand-rank-row" title={info.example}>
                   <span className="hand-rank-index">{i + 1}</span>
-                  <div className="hand-rank-text">
-                    <span className="hand-rank-name">
-                      {info.name}
-                      {moved && <span className="hand-rank-rule">house rule</span>}
-                    </span>
-                    <span className="hand-rank-detail">{info.detail}</span>
-                    <span className="hand-rank-example">{info.example}</span>
-                  </div>
+                  <span className="hand-rank-name">
+                    {info.name}
+                    {moved && <span className="hand-rank-rule">house rule</span>}
+                  </span>
+                  <span className="hand-rank-cards" aria-label={`For example ${info.example}`}>
+                    {info.groups.map((group, g) => (
+                      <span key={g} className="hand-rank-group">
+                        {group.map((card) => (
+                          <MiniCardFace key={`${card[0]}${card[1]}`} card={card} />
+                        ))}
+                      </span>
+                    ))}
+                  </span>
                 </li>
               );
             })}

@@ -596,8 +596,9 @@ input {
 
 .hand-rank-row {
   display: flex;
-  gap: 12px;
-  padding: 7px 0;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
   border-top: 1px solid var(--border);
 }
 
@@ -606,8 +607,7 @@ input {
 }
 
 .hand-rank-index {
-  flex: 0 0 18px;
-  padding-top: 1px;
+  flex: 0 0 16px;
   font-size: 12px;
   font-weight: 700;
   color: var(--muted);
@@ -615,40 +615,62 @@ input {
   font-variant-numeric: tabular-nums;
 }
 
-.hand-rank-text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
 .hand-rank-name {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text);
+  white-space: nowrap;
 }
 
 .hand-rank-rule {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
   border-radius: 4px;
   text-transform: uppercase;
   color: var(--ice);
   background-color: #7dd3fc22;
 }
 
-.hand-rank-detail {
-  font-size: 12px;
-  color: var(--muted);
+/* Example hand: groups of tiny cards, a little apart (three Nines | two Aces). */
+.hand-rank-cards {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
 }
 
-.hand-rank-example {
-  font-size: 12px;
-  color: var(--ice);
+.hand-rank-group {
+  display: flex;
+  gap: 2px;
+}
+
+.mini-card {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 26px;
+  border-radius: 3px;
+  background-color: var(--card-face);
+  line-height: 1;
+  user-select: none;
+}
+
+.mini-card-rank {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+.mini-card-suit {
+  font-size: 9px;
+  margin-top: 1px;
 }
 
 .hand-rankings-note {
