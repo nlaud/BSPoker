@@ -192,6 +192,89 @@ describe('parseHand', () => {
     ['too pair aces and fours', 'Two Pair, Aces and Fours'],
   ];
 
+  // Two pair: singular ranks, digits, typos, shorthand and "over" after "two pair".
+  const twoPairCases: [string, string][] = [
+    ['two pair ace king', 'Two Pair, Aces and Kings'],
+    ['two pair ace and king', 'Two Pair, Aces and Kings'],
+    ['two pair a k', 'Two Pair, Aces and Kings'],
+    ['two pair ak', 'Two Pair, Aces and Kings'],
+    ['tp kq', 'Two Pair, Kings and Queens'],
+    ['2p aces kings', 'Two Pair, Aces and Kings'],
+    ['two pair t9', 'Two Pair, Tens and Nines'],
+    ['2 pair 9 and 5', 'Two Pair, Nines and Fives'],
+    ['2 pair 9 5', 'Two Pair, Nines and Fives'],
+    ['two pair 10 9', 'Two Pair, Tens and Nines'],
+    ['two pair 2 3', 'Two Pair, Threes and Twos'],
+    ['two pair 4 3', 'Two Pair, Fours and Threes'],
+    ['two pair two and three', 'Two Pair, Threes and Twos'],
+    ['two pair three and four', 'Two Pair, Fours and Threes'],
+    ['two pair two kings two nines', 'Two Pair, Kings and Nines'],
+    ['two pair kings over nines', 'Two Pair, Kings and Nines'],
+    ['two pair, aces over twos', 'Two Pair, Aces and Twos'],
+    ['Two Pair, Kings and Nines', 'Two Pair, Kings and Nines'],
+    ['two-pair aces kings', 'Two Pair, Aces and Kings'],
+    ['tw pair aces kings', 'Two Pair, Aces and Kings'],
+    ['tow pair aces kings', 'Two Pair, Aces and Kings'],
+    ['tw0 pair kings 9s', 'Two Pair, Kings and Nines'],
+    ['two piar aces kings', 'Two Pair, Aces and Kings'],
+    ['two pair kins and nins', 'Two Pair, Kings and Nines'],
+    ['pair kings queens', 'Two Pair, Kings and Queens'],
+    ['pair of aces and pair of kings', 'Two Pair, Aces and Kings'],
+    ['a pair of aces and a pair of kings', 'Two Pair, Aces and Kings'],
+    ['pair of twos and threes', 'Two Pair, Threes and Twos'],
+    ['aces and a pair of kings', 'Two Pair, Aces and Kings'],
+    ['pairs of aces and threes', 'Two Pair, Aces and Threes'],
+    ['pairs of 3s and aces', 'Two Pair, Aces and Threes'],
+    ['pairs of ace and three', 'Two Pair, Aces and Threes'],
+    ['pairs of a and 3', 'Two Pair, Aces and Threes'],
+    ['pairs of 2 3', 'Two Pair, Threes and Twos'],
+    ['pairs of aces', 'Pair of Aces'],
+  ];
+
+  // Full house as "A full of B", with ranks in any form.
+  const fullOfCases: [string, string][] = [
+    ['aces full of kings', 'Full House, Three Aces and Two Kings'],
+    ['a full of k', 'Full House, Three Aces and Two Kings'],
+    ['ace full of king', 'Full House, Three Aces and Two Kings'],
+    ['9 full of 4', 'Full House, Three Nines and Two Fours'],
+    ['10 full of j', 'Full House, Three Tens and Two Jacks'],
+    ["A's full of K's", 'Full House, Three Aces and Two Kings'],
+    ['aces full kings', 'Full House, Three Aces and Two Kings'],
+    ['aces full o kings', 'Full House, Three Aces and Two Kings'],
+    ['aces full on kings', 'Full House, Three Aces and Two Kings'],
+    ['aces fill of kings', 'Full House, Three Aces and Two Kings'],
+    ['twos full of kings', 'Full House, Three Twos and Two Kings'],
+    ['a full house aces over kings', 'Full House, Three Aces and Two Kings'],
+  ];
+
+  for (const [input, expected] of fullOfCases) {
+    it(`parses full house "${input}" to "${expected}"`, () => {
+      const result = parseHand(input);
+      expect(result.ok && result.normal).toBe(expected);
+    });
+  }
+
+  for (const [input, expected] of twoPairCases) {
+    it(`parses two pair "${input}" to "${expected}"`, () => {
+      const result = parseHand(input);
+      expect(result.ok && result.normal).toBe(expected);
+    });
+  }
+
+  it('asks for both ranks when two pair is incomplete', () => {
+    for (const input of ['two pair', 'two pairs', 'aces up', 'two pair kings']) {
+      const result = parseHand(input);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toBe('Incomplete two pair');
+    }
+  });
+
+  it('keeps full house readings that do not say two pair', () => {
+    expect(parseHand('kings over nines')).toMatchObject({ normal: 'Full House, Three Kings and Two Nines' });
+    expect(parseHand('three kings two nines')).toMatchObject({ normal: 'Full House, Three Kings and Two Nines' });
+    expect(parseHand('kins')).toMatchObject({ normal: 'Pair of Kings' });
+  });
+
   for (const [input, expected] of bugFixAndNewCases) {
     it(`parses bug fix or new case "${input}" to "${expected}"`, () => {
       const result = parseHand(input);
@@ -208,7 +291,7 @@ describe('parseHand', () => {
     'three queens kings',
     'flush of hearts kings',
     'four kings queens',
-    'pair kings queens',
+    'pair of aces and a king',
     'two pair kings queens jacks',
     'full house kings over queens jacks',
     'straight 5 6 7 8 10',

@@ -160,6 +160,7 @@ export const App: React.FC = () => {
             onSetReady={(ready) => clientSession?.setReady(ready)}
             onLeave={handleLeave}
             onSetRule={(rule, value) => clientSession?.setRule(rule, value)}
+            onSetTurnTimer={(seconds) => clientSession?.setTurnTimer(seconds)}
             onKick={(playerId) => clientSession?.kick(playerId)}
           />
         </>

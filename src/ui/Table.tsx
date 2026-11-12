@@ -7,6 +7,8 @@ import { Seat } from './Seat';
 import { BSButton } from './BSButton';
 import { HandDialog } from './HandDialog';
 import { LogDrawer } from './LogDrawer';
+import { HandRankings } from './HandRankings';
+import { TurnTimer } from './TurnTimer';
 import { Verdict } from './Verdict';
 import { GameOver } from './GameOver';
 import { useHoldToPeek } from './useHoldToPeek';
@@ -23,15 +25,16 @@ import {
   playElimination,
 } from './cardSounds';
 
-/** Whole deal (all flights launched) fits in about this budget, even with 42 cards. */
-const DEAL_BUDGET_MS = 2200;
-const FLIGHT_MS = 300;
-const COMMUNITY_FLIP_DELAY_MS = 120;
-/** The shuffle plays first; the first card leaves the deck this long after it starts. */
-const SHUFFLE_LEAD_MS = 450;
-/** The deck glides between the table center and its spot beside the community cards. */
-const DECK_MOVE_MS = 280;
-const COMMUNITY_GAP_MS = 160;
+import {
+  FLIGHT_MS,
+  COMMUNITY_FLIP_DELAY_MS,
+  SHUFFLE_LEAD_MS,
+  COMMUNITY_GAP_MS,
+  dealStaggerMs,
+  communityDealStartMs,
+  dealDurationMs,
+} from '../engine/dealTiming';
+
 const ELIMINATION_SOUND_DELAY_MS = 450;
 
 type DealTarget =
@@ -206,7 +209,7 @@ export const Table: React.FC<TableProps> = ({
       { kind: 'community', index: 1 },
     ];
     const totalCards = playerQueue.length + communityQueue.length;
-    const stagger = Math.min(90, Math.floor(DEAL_BUDGET_MS / Math.max(1, playerQueue.length)));
+    const stagger = dealStaggerMs(playerQueue.length);
 
     setIsDealing(true);
     setDeckAtSide(false);
@@ -257,17 +260,12 @@ export const Table: React.FC<TableProps> = ({
     const deckBackAt = SHUFFLE_LEAD_MS + playerQueue.length * stagger;
     const tDeck = setTimeout(() => setDeckAtSide(true), deckBackAt);
     dealTimeoutsRef.current.push(tDeck);
-    const communityAt = deckBackAt + DECK_MOVE_MS;
+    const communityAt = communityDealStartMs(playerQueue.length);
     communityQueue.forEach((target, i) =>
       launch(target, playerQueue.length + i, communityAt + i * COMMUNITY_GAP_MS),
     );
 
-    const endDealTime =
-      communityAt +
-      (communityQueue.length - 1) * COMMUNITY_GAP_MS +
-      FLIGHT_MS +
-      COMMUNITY_FLIP_DELAY_MS +
-      280;
+    const endDealTime = dealDurationMs(playerQueue.length);
     const tEnd = setTimeout(() => setIsDealing(false), endDealTime);
     dealTimeoutsRef.current.push(tEnd);
     // Only a new round may start a deal; other view changes must not restart it.
@@ -286,6 +284,13 @@ export const Table: React.FC<TableProps> = ({
   const canPeek = !isSpectator && !isEliminated && !isDealing;
 
   const isMyTurn = !isSpectator && !isEliminated && view.turnPlayerId === view.viewerId;
+
+  // The turn can end while the dialog is open (the turn timer ran out, or the
+  // round restarted): close it so nobody types a call for a turn that is over.
+  const canCall = isMyTurn && view.phase === 'bidding';
+  useEffect(() => {
+    if (!canCall) setIsDialogOpen(false);
+  }, [canCall]);
 
   // Sound chime when it becomes my turn
   useEffect(() => {
@@ -398,6 +403,7 @@ export const Table: React.FC<TableProps> = ({
   const matchingCardIds = new Set(view.revealData?.matchingCards.map((c) => c.id) || []);
 
   const isRoyalFlush = view.currentCall?.hand.kind === 'royalFlush';
+  const turnSeconds = view.settings?.turnSeconds ?? 0;
 
   return (
     <div className="table-viewport" onPointerDown={onTablePointerDown}>
@@ -419,9 +425,15 @@ export const Table: React.FC<TableProps> = ({
               <line x1="3" y1="18" x2="21" y2="18" />
             </svg>
           </button>
+          <HandRankings rules={view.settings} />
         </div>
 
         <div className="top-bar-right">
+          {turnSeconds > 0 && (
+            <span className="chip rule-chip" title={`Each turn has a ${turnSeconds} second limit`}>
+              {turnSeconds}s turns
+            </span>
+          )}
           {view.settings?.straightBeatsFlush && (
             <span className="chip rule-chip" title="Straights rank above flushes this game">
               Straight &gt; Flush
@@ -535,6 +547,13 @@ export const Table: React.FC<TableProps> = ({
             </>
           ) : (
             <div className="call-start-line">{starterName} starts</div>
+          )}
+          {view.phase === 'bidding' && view.turnRemainingMs !== null && turnSeconds > 0 && !isDealing && (
+            <TurnTimer
+              remainingMs={view.turnRemainingMs}
+              totalMs={turnSeconds * 1000}
+              isMine={isMyTurn}
+            />
           )}
         </div>
       </main>

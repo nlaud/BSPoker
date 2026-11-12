@@ -93,7 +93,7 @@ const SINGLE_LETTER_SUITS: Record<string, Suit> = {
 const KEYWORDS = new Set([
   'pair',
   'pairs',
-  'two-pair',
+  'twopair',
   'trips',
   'triple',
   'set',
@@ -113,8 +113,11 @@ const KEYWORDS = new Set([
   'the',
   'and',
   'with',
+  'on',
+  'o',
   'in',
   'over',
+  'up',
   'to',
   'through',
   'thru',
@@ -186,6 +189,16 @@ for (const [r, rankInfo] of Object.entries(RANK_DICT)) {
   ALL_ENTRIES.push({ word: r, kind: 'rank', data: rankInfo });
 }
 
+/**
+ * Breaks a tie between two equally close fuzzy matches.
+ * A typo ending in "s" ("kins", "nins") is a plural rank, not a keyword like "kind".
+ * Otherwise keywords win over ranks.
+ */
+function tiePriority(token: string, entry: MatchEntry): number {
+  if (token.endsWith('s') && entry.kind === 'rank' && (entry.data as RankInfo).plural) return 2;
+  return entry.kind === 'keyword' ? 1 : 0;
+}
+
 function matchToken(token: string): MatchEntry | null {
   // Exact match
   for (const entry of ALL_ENTRIES) {
@@ -221,16 +234,45 @@ function matchToken(token: string): MatchEntry | null {
       if (dist < bestDist) {
         bestDist = dist;
         bestEntry = entry;
-      } else if (dist === bestDist && bestEntry) {
-        // Ties prefer keywords over ranks
-        if (bestEntry.kind !== 'keyword' && entry.kind === 'keyword') {
-          bestEntry = entry;
-        }
+      } else if (dist === bestDist && bestEntry && tiePriority(token, entry) > tiePriority(token, bestEntry)) {
+        bestEntry = entry;
       }
     }
   }
 
   return bestEntry;
+}
+
+/** A typo of "pair" or "pairs", such as "piar" or "pairr". */
+function isPairWord(token: string): boolean {
+  if (token === 'pair' || token === 'pairs') return true;
+  const m = matchToken(token);
+  return m !== null && m.kind === 'keyword' && (m.word === 'pair' || m.word === 'pairs');
+}
+
+/** A typo of "two" right before "pair", such as "tw", "tow" or "twp". Real rank words do not count. */
+function isTwoWord(token: string): boolean {
+  if (token === 'two' || token === '2') return true;
+  if (RANK_DICT[token] || !/^[a-z][a-z0-9]{1,3}$/.test(token)) return false;
+  return damerauLevenshtein(token, 'two') <= 1;
+}
+
+/** Joins "<two> <pair>" written with typos ("tw piar") into the single "twopair" token. */
+function mergeTwoPairTypos(tokens: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (i + 1 < tokens.length && isTwoWord(tokens[i]) && isPairWord(tokens[i + 1])) {
+      out.push('twopair');
+      i++;
+    } else {
+      out.push(tokens[i]);
+    }
+  }
+  if (!out.includes('twopair')) return out;
+  // "two pair ak" or "tp kq": two rank letters written together.
+  return out.flatMap((t) =>
+    /^[akqjt2-9]{2}$/.test(t) && !RANK_DICT[t] ? [...t].map((c) => (c === 't' ? '10' : c)) : [t],
+  );
 }
 
 interface TokenItem {
@@ -258,9 +300,11 @@ export function parseHand(rawInput: string): ParseResult {
   text = text.replace(/[♣♧]/g, ' clubs ');
   text = text.replace(/[♠♤]/g, ' spades ');
 
-  // Normalize "two pair", "2 pair", "double pair" and their plurals into "two-pair".
+  // Normalize "two pair", "2 pair", "double pair", their plurals and shorthands into "twopair".
   // "to"/"too" directly before "pair" is the common typo for "two".
-  text = text.replace(/\b(two|2|double|to|too)\s*-?\s*pairs?\b/g, 'two-pair');
+  // Typos of either word ("tw piar") are merged after tokenizing, below.
+  text = text.replace(/\b(two|2|double|dbl|to|too)\s*-?\s*pairs?\b/g, 'twopair');
+  text = text.replace(/\b(2p|tp|2pr)\b/g, 'twopair');
 
   // Normalize "one pair", "1 pair" into "pair"
   text = text.replace(/\b(one|1)\s*-?\s*pairs?\b/g, 'pair');
@@ -276,19 +320,17 @@ export function parseHand(rawInput: string): ParseResult {
   // Replace - between ranks with ' to '
   text = text.replace(/([0-9a-z]+)\s*-\s*([0-9a-z]+)/g, (_match, p1, p2) => {
     if ((p1 === 'two' || p1 === '2' || p1 === 'double') && p2 === 'pair') {
-      return 'two-pair';
+      return 'twopair';
     }
     return `${p1} to ${p2}`;
   });
 
-  // Strip other punctuation (leave hyphens in two-pair)
-  text = text.replace(/two\s*-\s*pair/g, 'TWOPAIR_TEMP');
+  // Strip other punctuation.
   text = text.replace(/[^a-z0-9\s]/g, ' ');
-  text = text.replace(/TWOPAIR_TEMP/g, 'two-pair');
   text = text.replace(/\s+/g, ' ').trim();
 
   // 2. Tokenize
-  const rawTokens = text.split(' ').filter(Boolean);
+  const rawTokens = mergeTwoPairTypos(text.split(' ').filter(Boolean));
   if (rawTokens.length === 0) {
     return { ok: false, error: DEFAULT_ERROR, hint: DEFAULT_HINT };
   }
@@ -308,13 +350,14 @@ export function parseHand(rawInput: string): ParseResult {
         (nextToken !== undefined &&
           (nextToken === 'pair' ||
             nextToken === 'pairs' ||
-            nextToken === 'two-pair' ||
+            nextToken === 'twopair' ||
             nextToken === 'trips' ||
             nextToken === 'triple' ||
             nextToken === 'set' ||
             nextToken === 'quad' ||
             nextToken === 'quads' ||
-            nextToken === 'full' ||
+            // "a full house" is an article, but "a full of k" means Aces full of Kings.
+            (nextToken === 'full' && matchToken(rawTokens[i + 2] ?? '')?.word === 'house') ||
             nextToken === 'house' ||
             nextToken === 'boat' ||
             nextToken === 'flush' ||
@@ -382,6 +425,10 @@ export function parseHand(rawInput: string): ParseResult {
     keywordSet.has('straight') || keywordSet.has('broadway') || keywordSet.has('wheel');
   const rankTokenCount = tokens.filter((t) => t.kind === 'rank').length;
   const isStraightSequence = hasStraightKeyword || rankTokenCount >= 5;
+  // After "two pair", "2 3" and "4 3" name two ranks. Only "two kings two nines" uses counts.
+  // "pairs" with two ranks ("pairs of ace and three") also names two pair.
+  const isTwoPairContext =
+    keywordSet.has('twopair') || keywordSet.has('up') || (keywordSet.has('pairs') && rankTokenCount >= 2);
 
   const resolvedRankGroups: RankGroup[] = [];
   for (let i = 0; i < tokens.length; i++) {
@@ -390,6 +437,11 @@ export function parseHand(rawInput: string): ParseResult {
 
     const isCountCandidate =
       !isStraightSequence &&
+      (!isTwoPairContext ||
+        (rankTokenCount === 4 &&
+          (curr.matched === '2' || curr.matched === 'two') &&
+          next?.kind === 'rank' &&
+          (next.data as RankInfo).plural)) &&
       (curr.matched === '2' ||
         curr.matched === 'two' ||
         curr.matched === '3' ||
@@ -568,7 +620,7 @@ export function parseHand(rawInput: string): ParseResult {
       resolvedRankGroups.length > 0 ||
       keywordSet.has('pair') ||
       keywordSet.has('pairs') ||
-      keywordSet.has('two-pair') ||
+      keywordSet.has('twopair') ||
       keywordSet.has('trips') ||
       keywordSet.has('triple') ||
       keywordSet.has('set') ||
@@ -589,7 +641,7 @@ export function parseHand(rawInput: string): ParseResult {
     if (
       keywordSet.has('pair') ||
       keywordSet.has('pairs') ||
-      keywordSet.has('two-pair') ||
+      keywordSet.has('twopair') ||
       keywordSet.has('trips') ||
       keywordSet.has('triple') ||
       keywordSet.has('set') ||
@@ -619,7 +671,7 @@ export function parseHand(rawInput: string): ParseResult {
       resolvedRankGroups.length > 0 ||
       keywordSet.has('pair') ||
       keywordSet.has('pairs') ||
-      keywordSet.has('two-pair') ||
+      keywordSet.has('twopair') ||
       keywordSet.has('trips') ||
       keywordSet.has('triple') ||
       keywordSet.has('set') ||
@@ -650,7 +702,7 @@ export function parseHand(rawInput: string): ParseResult {
   let tripsRank: Rank | null = count3 ? count3.rank : null;
   let pairRank: Rank | null = count2 ? count2.rank : null;
 
-  const FILLERS = new Set(['of', 'a', 'the', 'and', 'with', 'in']);
+  const FILLERS = new Set(['of', 'a', 'the', 'and', 'with', 'in', 'on', 'o']);
 
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
@@ -692,7 +744,10 @@ export function parseHand(rawInput: string): ParseResult {
     }
   }
 
-  if (tripsRank !== null && pairRank !== null) {
+  // "Two pair, Kings over Nines" is two pair, not a full house.
+  const isNamedTwoPair = isTwoPairContext && !hasFullHouseKeyword;
+
+  if (!isNamedTwoPair && tripsRank !== null && pairRank !== null) {
     if (tripsRank === pairRank) {
       return { ok: false, error: 'Invalid full house', hint: 'Trips and pair ranks must be different' };
     }
@@ -703,7 +758,7 @@ export function parseHand(rawInput: string): ParseResult {
     return { ok: true, hand, normal: normalForm(hand) };
   }
 
-  if (hasFullHouseKeyword || hasOverKeyword) {
+  if (hasFullHouseKeyword || (hasOverKeyword && !isNamedTwoPair)) {
     const ranks = resolvedRankGroups.map((g) => g.rank);
     if (ranks.length === 2) {
       if (ranks[0] === ranks[1]) {
@@ -727,7 +782,7 @@ export function parseHand(rawInput: string): ParseResult {
     if (
       keywordSet.has('pair') ||
       keywordSet.has('pairs') ||
-      keywordSet.has('two-pair') ||
+      keywordSet.has('twopair') ||
       keywordSet.has('trips') ||
       keywordSet.has('triple') ||
       keywordSet.has('set') ||
@@ -758,7 +813,7 @@ export function parseHand(rawInput: string): ParseResult {
     if (
       keywordSet.has('pair') ||
       keywordSet.has('pairs') ||
-      keywordSet.has('two-pair') ||
+      keywordSet.has('twopair') ||
       keywordSet.has('trips') ||
       keywordSet.has('triple') ||
       keywordSet.has('set') ||
@@ -790,7 +845,7 @@ export function parseHand(rawInput: string): ParseResult {
     if (
       keywordSet.has('pair') ||
       keywordSet.has('pairs') ||
-      keywordSet.has('two-pair') ||
+      keywordSet.has('twopair') ||
       keywordSet.has('full') ||
       keywordSet.has('house') ||
       keywordSet.has('boat')
@@ -809,14 +864,14 @@ export function parseHand(rawInput: string): ParseResult {
   }
 
   // 8. Two pair: two pair X Y, two pair X and Y, X and Y (two distinct plural ranks), two X two Y
-  const hasTwoPairKeyword = keywordSet.has('two-pair');
+  const hasTwoPairKeyword = isTwoPairContext;
   const countsOfTwo = resolvedRankGroups.filter((g) => g.count === 2);
+  const pairWordCount = tokens.filter((t) => t.matched === 'pair' || t.matched === 'pairs').length;
 
+  // "Aces and Kings", "pair of Aces and Kings", "pair of Aces and pair of Kings".
   const isTwoDistinctPluralRanks =
-    !keywordSet.has('pair') &&
     resolvedRankGroups.length === 2 &&
-    resolvedRankGroups[0].plural &&
-    resolvedRankGroups[1].plural;
+    (pairWordCount >= 2 || (resolvedRankGroups[0].plural && resolvedRankGroups[1].plural));
 
   if (hasTwoPairKeyword || countsOfTwo.length >= 2 || isTwoDistinctPluralRanks) {
     const ranks = resolvedRankGroups.map((g) => g.rank);

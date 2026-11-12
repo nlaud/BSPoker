@@ -1,4 +1,5 @@
-import { Hand, Rules } from './hands';
+import { Hand } from './hands';
+import type { GameSettings } from './game';
 import { Card } from './cards';
 
 export interface PlayerPublic {
@@ -49,9 +50,16 @@ export interface PlayerView {
   lastBsCallerId: string | null;
   revealData: RevealViewData | null;
   winnerId: string | null;
-  countdownSeconds: number | null;
+  /** Time left in the lobby countdown when the host sent this view; clients count down from it. */
+  countdownRemainingMs: number | null;
+  /**
+   * Time the turn player has left when the host sent this view, or null without
+   * a turn timer. Clients count down from it on their own clock, so a skewed
+   * clock between devices does not matter.
+   */
+  turnRemainingMs: number | null;
   log: string[];
-  settings: Rules;
+  settings: GameSettings;
 }
 
 // Client -> Host messages
@@ -59,7 +67,7 @@ export interface PlayerView {
  * Bumped whenever host and client messages change incompatibly. The page on
  * GitHub Pages and a host's cloned server must agree on it.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export type ClientMessage =
   /** hostKey is only sent by the host's own page; it claims the host seat. */
@@ -80,6 +88,7 @@ export type ClientMessage =
   | { type: 'leave' }
   | { type: 'kick'; playerId: string }
   | { type: 'setRule'; rule: 'straightBeatsFlush'; value: boolean }
+  | { type: 'setTurnTimer'; seconds: number }
   | { type: 'ping' };
 
 // Host -> Client messages

@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { PlayerView } from '../engine/protocol';
+import { TURN_TIMER_OPTIONS } from '../engine/game';
 import { inviteLink } from './connection';
 import { setSeenDealSeq } from './dealMemory';
 import { preloadCardSounds } from './cardSounds';
+import { useTimeLeft } from './useTimeLeft';
 
 export interface LobbyProps {
   view: PlayerView;
   onSetReady: (ready: boolean) => void;
   onLeave: () => void;
   onSetRule?: (rule: 'straightBeatsFlush', value: boolean) => void;
+  onSetTurnTimer?: (seconds: number) => void;
   /** Host only: free an offline player's seat right away. */
   onKick?: (playerId: string) => void;
 }
@@ -18,9 +21,12 @@ export const Lobby: React.FC<LobbyProps> = ({
   onSetReady,
   onLeave,
   onSetRule,
+  onSetTurnTimer,
   onKick,
 }) => {
   const [copied, setCopied] = useState(false);
+  const { msLeft: countdownMsLeft } = useTimeLeft(view.countdownRemainingMs, 100);
+  const countdown = countdownMsLeft === null ? null : Math.max(1, Math.ceil(countdownMsLeft / 1000));
 
   // Decode the card sounds while waiting, so the first deal's shuffle is ready
   // even for a player who joined by link without tapping anything yet.
@@ -46,6 +52,7 @@ export const Lobby: React.FC<LobbyProps> = ({
   const me = view.players.find((p) => p.id === view.viewerId);
   const isReady = me?.ready || false;
 
+  const turnSeconds = view.settings?.turnSeconds ?? 0;
   const seated = view.players.filter((p) => !p.isSpectator);
   const notReady = seated.filter((p) => !p.ready);
 
@@ -64,9 +71,13 @@ export const Lobby: React.FC<LobbyProps> = ({
           </button>
         </div>
 
-        {view.countdownSeconds !== null ? (
-          <div className="countdown-banner" role="status">
-            Starting in {view.countdownSeconds}...
+        {countdown !== null ? (
+          <div className="countdown-banner" role="status" aria-label={`Starting in ${countdown}`}>
+            Starting in{' '}
+            {/* A new key per second replays the pop for each number. */}
+            <span key={countdown} className="countdown-number">
+              {countdown}
+            </span>
           </div>
         ) : seated.length >= 2 && notReady.length > 0 ? (
           <div className="waiting-ready-banner" role="status">
@@ -93,6 +104,29 @@ export const Lobby: React.FC<LobbyProps> = ({
               onChange={(e) => onSetRule?.('straightBeatsFlush', e.target.checked)}
             />
           </label>
+          <div className={`rule-toggle-row rule-timer-row ${!view.isHost ? 'is-disabled' : ''}`}>
+            <div className="rule-toggle-text">
+              <span className="rule-toggle-label" id="turn-timer-label">Turn timer</span>
+              <span className="rule-toggle-subline">
+                {turnSeconds > 0 ? 'Out of time: BS, or the lowest opening call' : 'Players take as long as they like'}
+              </span>
+            </div>
+            <div className="segmented" role="radiogroup" aria-labelledby="turn-timer-label">
+              {TURN_TIMER_OPTIONS.map((seconds) => (
+                <button
+                  key={seconds}
+                  type="button"
+                  role="radio"
+                  aria-checked={turnSeconds === seconds}
+                  className={`segmented-option ${turnSeconds === seconds ? 'is-selected' : ''}`}
+                  disabled={!view.isHost}
+                  onClick={() => onSetTurnTimer?.(seconds)}
+                >
+                  {seconds > 0 ? `${seconds}s` : 'Off'}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="lobby-section">

@@ -18,6 +18,11 @@ The last player left wins.
 
 During a round, hold Space (or press and hold anywhere on a touch screen) to look at your cards.
 On your turn, hold the BS button for one second to call BS, or select "Call a hand" and type a hand such as "pair of nines".
+Select the "i" button at the top left to see every hand from the highest to the lowest.
+
+In the lobby, the host can turn on a turn timer of 15, 30, 60 or 90 seconds.
+When a player runs out of time, the game calls BS for them.
+If nobody has called a hand yet, the game calls "Two High" for them instead.
 
 ## Hosting a game
 

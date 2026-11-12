@@ -131,12 +131,19 @@ input {
 
 .landing-screen, .lobby-screen, .center-screen {
   display: flex;
-  align-items: center;
-  justify-content: center;
   width: 100%;
   height: 100%;
   padding: 20px;
   overflow-y: auto;
+}
+
+/*
+ * Auto margins center the card while it fits, and drop to 0 when it is taller
+ * than the screen, so a short phone can still scroll to the top of the lobby
+ * (align-items: center would push the top out of reach).
+ */
+.landing-screen > *, .lobby-screen > *, .center-screen > * {
+  margin: auto;
 }
 
 .landing-card, .lobby-card {
@@ -252,7 +259,18 @@ input {
   font-size: 18px;
   font-weight: 700;
   margin-bottom: 20px;
-  animation: pulse 1s infinite alternate;
+}
+
+.countdown-number {
+  display: inline-block;
+  min-width: 0.7em;
+  font-variant-numeric: tabular-nums;
+  animation: countdownPop 600ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@keyframes countdownPop {
+  0% { transform: scale(1.6); opacity: 0.3; }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 .waiting-ready-banner {
@@ -267,10 +285,6 @@ input {
   margin-bottom: 20px;
 }
 
-@keyframes pulse {
-  0% { opacity: 0.7; }
-  100% { opacity: 1; }
-}
 
 .lobby-section {
   margin-bottom: 20px;
@@ -397,6 +411,55 @@ input {
   color: var(--muted);
 }
 
+.rule-timer-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  cursor: default;
+}
+
+.rule-timer-row.is-disabled {
+  cursor: not-allowed;
+}
+
+.segmented {
+  display: flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 8px;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.segmented-option {
+  flex: 1;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: none;
+  border: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.segmented-option:not(:disabled):hover {
+  color: var(--text);
+  background-color: var(--surface-2);
+}
+
+.segmented-option.is-selected {
+  color: var(--bg);
+  background-color: var(--ice);
+}
+
+.segmented-option:disabled {
+  cursor: inherit;
+}
+
 .rule-checkbox {
   width: 18px;
   height: 18px;
@@ -470,10 +533,142 @@ input {
   z-index: 50;
 }
 
+.top-bar-left,
 .top-bar-right {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* Hand rankings ("i" button and its panel) */
+.hand-rankings {
+  position: relative;
+}
+
+.info-btn.is-open {
+  background-color: var(--surface-2);
+  border-color: var(--ice);
+  color: var(--ice);
+}
+
+.hand-rankings-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 320px;
+  max-height: calc(100dvh - 90px);
+  overflow-y: auto;
+  padding: 14px 16px 16px;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  z-index: 60;
+  animation: rankingsIn 140ms ease;
+}
+
+@keyframes rankingsIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.hand-rankings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.hand-rankings-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.hand-rankings-close {
+  font-size: 22px;
+}
+
+.hand-rankings-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.hand-rank-row {
+  display: flex;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+}
+
+.hand-rank-row:first-child {
+  border-top: none;
+}
+
+.hand-rank-index {
+  flex: 0 0 18px;
+  padding-top: 1px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.hand-rank-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.hand-rank-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hand-rank-rule {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  color: var(--ice);
+  background-color: #7dd3fc22;
+}
+
+.hand-rank-detail {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.hand-rank-example {
+  font-size: 12px;
+  color: var(--ice);
+}
+
+.hand-rankings-note {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+@media (max-width: 639px) {
+  .hand-rankings-panel {
+    position: fixed;
+    top: 64px;
+    left: 16px;
+    right: 16px;
+    width: auto;
+    max-height: calc(100dvh - 80px);
+  }
 }
 
 .chip {
@@ -696,6 +891,53 @@ input {
   font-weight: 700;
   color: var(--text);
   letter-spacing: -0.5px;
+}
+
+/* Turn timer under the current call */
+.turn-timer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.turn-timer-track {
+  width: 140px;
+  height: 4px;
+  border-radius: 2px;
+  background-color: var(--border);
+  overflow: hidden;
+}
+
+.turn-timer-fill {
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+  background-color: var(--muted);
+  transform-origin: left center;
+  will-change: transform;
+  transition: background-color 0.3s ease;
+}
+
+.turn-timer.is-mine .turn-timer-fill {
+  background-color: var(--ice);
+}
+
+.turn-timer.is-warn .turn-timer-fill {
+  background-color: var(--coral);
+}
+
+.turn-timer-seconds {
+  min-width: 28px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-timer.is-warn .turn-timer-seconds {
+  color: var(--coral);
 }
 
 .call-start-line {
