@@ -429,16 +429,6 @@ export const Table: React.FC<TableProps> = ({
         </div>
 
         <div className="top-bar-right">
-          {turnSeconds > 0 && (
-            <span className="chip rule-chip" title={`Each turn has a ${turnSeconds} second limit`}>
-              {turnSeconds}s turns
-            </span>
-          )}
-          {view.settings?.straightBeatsFlush && (
-            <span className="chip rule-chip" title="Straights rank above flushes this game">
-              Straight &gt; Flush
-            </span>
-          )}
           <button
             type="button"
             className="chip code-chip"

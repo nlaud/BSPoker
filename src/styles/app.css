@@ -703,19 +703,6 @@ input {
   white-space: nowrap;
 }
 
-.rule-chip {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: normal;
-  padding: 6px 10px;
-  color: var(--muted);
-  cursor: default;
-}
-
-.rule-chip:hover {
-  background-color: var(--surface);
-}
-
 /* Opponents Layer */
 .opponents-layer {
   position: absolute;
