@@ -44,7 +44,8 @@ export const Seat: React.FC<SeatProps> = ({
           {!player.connected && (
             <span className="badge-offline">offline</span>
           )}
-          {isHost && !player.connected && onKick && (
+          {/* Only a seat still in the hand can be removed; afterwards it just reads "out". */}
+          {isHost && !player.connected && !isEliminated && !player.isSpectator && onKick && (
             <button
               type="button"
               className="btn-kick"

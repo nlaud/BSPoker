@@ -63,7 +63,15 @@ export const PROTOCOL_VERSION = 2;
 
 export type ClientMessage =
   /** hostKey is only sent by the host's own page; it claims the host seat. */
-  | { type: 'join'; token: string; name: string; hostKey?: string; protocolVersion: number }
+  | {
+      type: 'join';
+      token: string;
+      name: string;
+      hostKey?: string;
+      protocolVersion: number;
+      /** Server run this tab joined before; a different run means the host restarted. */
+      serverId?: string;
+    }
   | { type: 'setReady'; ready: boolean }
   | { type: 'peek'; peeking: boolean }
   | { type: 'call'; hand: Hand }
@@ -76,7 +84,9 @@ export type ClientMessage =
 
 // Host -> Client messages
 export type HostMessage =
-  | { type: 'welcome'; playerId: string; protocolVersion: number }
+  /** serverId changes on every server start, so a tab can tell a restart from a reconnect. */
+  | { type: 'welcome'; playerId: string; protocolVersion: number; serverId?: string }
   | { type: 'view'; view: PlayerView }
-  | { type: 'error'; message: string }
+  /** fatal: the server closes the connection and the tab must not retry. */
+  | { type: 'error'; message: string; fatal?: boolean }
   | { type: 'pong' };

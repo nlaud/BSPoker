@@ -130,6 +130,19 @@ function findNextAlivePlayer(state: GameState, fromSeatIndex: number): PlayerSta
   return alive[0];
 }
 
+/**
+ * Starts the lobby countdown when at least 2 seated players are all ready, and
+ * cancels it otherwise. Runs after anything that changes who is seated or
+ * ready, so removing the last unready player starts the match too.
+ */
+function refreshLobbyCountdown(state: GameState, now: number = Date.now()): void {
+  if (state.phase !== 'lobby') return;
+  const seated = state.players.filter((p) => !p.isSpectator);
+  const allReady = seated.length >= 2 && seated.every((p) => p.ready);
+  if (!allReady) state.countdownDeadline = null;
+  else if (state.countdownDeadline === null) state.countdownDeadline = now + 3000;
+}
+
 /** Verdict headings, shared by the log and the full-screen verdict. */
 export const VERDICT_HAD_IT = "Never didn't have it";
 export const VERDICT_BS = 'BS!';
@@ -251,17 +264,9 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       if (!player || player.isSpectator) return nextState;
 
       player.ready = action.ready;
-
-      const seated = nextState.players.filter((p) => !p.isSpectator);
-      const allReady = seated.length >= 2 && seated.every((p) => p.ready);
-
-      if (allReady) {
-        const now = action.now ?? Date.now();
-        nextState.countdownDeadline = now + 3000;
-      } else {
-        nextState.countdownDeadline = null;
-      }
-
+      // A fresh "everyone ready" always restarts the full 3 s countdown.
+      nextState.countdownDeadline = null;
+      refreshLobbyCountdown(nextState, action.now ?? Date.now());
       return nextState;
     }
 
@@ -452,8 +457,9 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
 
       if (nextState.phase === 'lobby') {
         nextState.players = nextState.players.filter((p) => p.id !== action.playerId);
-        // Cancel countdown
+        // The players left may all be ready: restart the countdown for them.
         nextState.countdownDeadline = null;
+        refreshLobbyCountdown(nextState);
         return nextState;
       }
 
@@ -507,9 +513,14 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
 
     case 'cleanDisconnectedInLobby': {
       if (nextState.phase === 'lobby') {
+        const before = nextState.players.length;
         nextState.players = nextState.players.filter(
           (p) => p.id !== action.playerId || p.connected
         );
+        if (nextState.players.length !== before) {
+          nextState.countdownDeadline = null;
+          refreshLobbyCountdown(nextState);
+        }
       }
       return nextState;
     }

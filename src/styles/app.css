@@ -431,8 +431,12 @@ input {
 
 .table-viewport {
   position: relative;
-  width: 100vw;
+  width: 100%;
+  /* 100vh on phones is the height with the browser bars hidden, so the bottom
+     of the table (your cards, the hint, the buttons) slid under the toolbar.
+     dvh tracks the visible area; vh stays as the fallback for older browsers. */
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
@@ -706,8 +710,19 @@ input {
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  padding-bottom: 24px;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   z-index: 30;
+}
+
+@media (max-width: 639px) {
+  .player-bottom-area {
+    gap: 10px;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+  .peek-hint-text {
+    text-align: center;
+    padding: 0 16px;
+  }
 }
 
 .player-cards-row {
@@ -1375,4 +1390,10 @@ input {
   .verdict-subline {
     font-size: 16px;
   }
+}
+
+.player-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
