@@ -4,6 +4,7 @@
  * with a 4-letter code.
  *
  * Flags:
+ *   --name <n>    your player name (default: the name this browser last used)
  *   --port <n>    local port (default 8787)
  *   --no-tunnel   same-wifi play only (no public address, no code lookup)
  *   --no-open     do not open the host page in a browser
@@ -127,7 +128,8 @@ async function main(): Promise<void> {
   });
 
   const local = `http://localhost:${server.port}/`;
-  const hostLink = `${local}?host=${server.hostKey}`;
+  const hostName = option('name', '').trim().slice(0, 16);
+  const hostLink = `${local}?host=${server.hostKey}${hostName ? `&name=${encodeURIComponent(hostName)}` : ''}`;
   const pages = pagesUrl();
 
   let tunnel: Tunnel | null = null;
@@ -185,7 +187,12 @@ async function main(): Promise<void> {
   process.on('SIGTERM', stop);
 }
 
-main().catch((err) => {
-  console.error(err);
+main().catch((err: NodeJS.ErrnoException) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`\n  Port ${option('port', '8787')} is already in use. Is another "npm run host" still running?`);
+    console.error('  Stop it, or pick another port: npm run host -- --port 8788\n');
+  } else {
+    console.error(err);
+  }
   process.exit(1);
 });

@@ -47,6 +47,10 @@ export const App: React.FC = () => {
     () => new URLSearchParams(window.location.search).get('code')?.toUpperCase().slice(0, 4) ?? '',
   );
   const hostKeyRef = useRef<string | null>(new URLSearchParams(window.location.search).get('host'));
+  /** Name from `npm run host -- --name <n>`, carried in the host link. */
+  const linkNameRef = useRef<string | null>(
+    new URLSearchParams(window.location.search).get('name')?.trim().slice(0, 16) || null,
+  );
   const clientSessionRef = useRef<ClientSession | null>(null);
 
   useEffect(() => {
@@ -70,9 +74,10 @@ export const App: React.FC = () => {
       setClientSession(client);
       writeLastJoin({ code, wsUrl });
       // The host key is only needed for the first join; keep it out of the address bar.
-      if (hostKeyRef.current) {
+      if (hostKeyRef.current || linkNameRef.current) {
         hostKeyRef.current = null;
-        setQuery({ host: null });
+        linkNameRef.current = null;
+        setQuery({ host: null, name: null });
       }
       client.onView((newView) => {
         setView(newView);
@@ -107,7 +112,7 @@ export const App: React.FC = () => {
 
   // A refresh rejoins the same seat; a host link joins straight away.
   useEffect(() => {
-    const name = getSavedPlayerName();
+    const name = linkNameRef.current || getSavedPlayerName();
     const last = readLastJoin();
     if (mode.kind !== 'code') {
       if (hostKeyRef.current || (last && last.wsUrl === mode.wsUrl)) {
